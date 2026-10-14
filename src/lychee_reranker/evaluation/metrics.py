@@ -9,19 +9,16 @@ def ranked_document_ids(scores: Mapping[str, float]) -> list[str]:
 
     The original FlagEmbedding evaluator passes score mappings directly to
     ``pytrec_eval``.  Its C++ evaluator orders equal scores by descending
-    document ID, independently of mapping insertion order.  Grouping equal
-    floating-point scores before sorting keeps that behavior explicit and
-    avoids using a secondary ascending key that changes graded metrics.
+    document ID, independently of mapping insertion order.
     """
-    buckets: Dict[float, list[str]] = {}
     for doc_id, score in scores.items():
         if not isinstance(doc_id, str) or not math.isfinite(float(score)):
             raise ValueError("run document IDs must be strings with finite scores")
-        buckets.setdefault(float(score), []).append(doc_id)
     return [
         doc_id
-        for score in sorted(buckets, reverse=True)
-        for doc_id in sorted(buckets[score], reverse=True)
+        for doc_id, _ in sorted(
+            scores.items(), key=lambda item: (float(item[1]), item[0]), reverse=True
+        )
     ]
 
 
@@ -31,7 +28,8 @@ def _stable_ranked_document_ids(scores: Mapping[str, float]) -> list[str]:
         if not isinstance(doc_id, str) or not math.isfinite(float(score)):
             raise ValueError("run document IDs must be strings with finite scores")
     return [
-        doc_id for doc_id, _ in sorted(scores.items(), key=lambda item: float(item[1]), reverse=True)
+        doc_id
+        for doc_id, _ in sorted(scores.items(), key=lambda item: float(item[1]), reverse=True)
     ]
 
 

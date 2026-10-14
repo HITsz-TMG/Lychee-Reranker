@@ -42,7 +42,7 @@ class ReleaseScanTests(unittest.TestCase):
 
             staged = root / "index.txt"
             token = "sk-" + "q" * 24
-            staged.write_text("api" + "_" + "key = \"" + token + "\"\n", encoding="utf-8")
+            staged.write_text("api" + "_" + 'key = "' + token + '"\n', encoding="utf-8")
             self._git(root, "add", "index.txt")
             staged.write_text("safe\n", encoding="utf-8")
 
@@ -102,7 +102,9 @@ class ReleaseScanTests(unittest.TestCase):
             large = root / "large.txt"
             large.write_bytes(b"x" * (CHECK_RELEASE.MAX_FILE_SIZE + 1))
             self._git(root, "add", "large.txt")
-            with mock.patch.object(CHECK_RELEASE, "_git_bytes", wraps=CHECK_RELEASE._git_bytes) as git:
+            with mock.patch.object(
+                CHECK_RELEASE, "_git_bytes", wraps=CHECK_RELEASE._git_bytes
+            ) as git:
                 errors, _ = CHECK_RELEASE.scan_repository(root)
 
             joined = "\n".join(errors)
@@ -126,7 +128,14 @@ class ReleaseScanTests(unittest.TestCase):
             private_key_marker = "BEGIN " + "PRIVATE KEY"
             aws_assignment = "AWS_" + "SECRET" + "_ACCESS_KEY=" + "z" * 24
             (root / "credentials.txt").write_text(
-                private_key_marker + "\n" + aws_assignment + "\n" + "access" + "_" + "token=" + secret,
+                private_key_marker
+                + "\n"
+                + aws_assignment
+                + "\n"
+                + "access"
+                + "_"
+                + "token="
+                + secret,
                 encoding="utf-8",
             )
             (root / "safe-fixtures.txt").write_text(

@@ -125,6 +125,67 @@ class EvaluationPipelineTests(unittest.TestCase):
         self.assertEqual(set(aggregate), {"cqadupstack", "fiqa"})
         self.assertAlmostEqual(aggregate["cqadupstack"]["ndcg@10"], 0.3)
 
+    def test_complete_cqadupstack_pipeline_averages_all_twelve_children(self):
+        children = (
+            "android",
+            "english",
+            "gaming",
+            "gis",
+            "mathematica",
+            "physics",
+            "programmers",
+            "stats",
+            "tex",
+            "unix",
+            "webmasters",
+            "wordpress",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for index, child in enumerate(children):
+                data = root / "data" / "cqadupstack" / child
+                write_jsonl(
+                    data / "corpus.jsonl",
+                    [
+                        {"_id": "good", "text": "relevant"},
+                        {"_id": "bad", "text": "noise"},
+                    ],
+                )
+                write_jsonl(data / "test_queries.jsonl", [{"_id": "q", "text": "question"}])
+                write_jsonl(
+                    data / "test_qrels.jsonl",
+                    [
+                        {
+                            "query-id": "q",
+                            "corpus-id": "good" if index % 2 else "bad",
+                            "score": 1,
+                        }
+                    ],
+                )
+            config = {
+                "benchmark": "beir",
+                "data_dir": str(root / "data"),
+                "output_dir": str(root / "out"),
+                "tasks": ["cqadupstack"],
+                "metrics": ["ndcg@1"],
+                "retrieval_top_k": 2,
+                "rerank_top_k": 2,
+                "embedder": {"model_name_or_path": "fake"},
+                "reranker": {"model_name_or_path": "fake"},
+            }
+            with (
+                patch(
+                    "lychee_reranker.evaluation.cli._build_embedder", return_value=FakeEmbedder()
+                ),
+                patch(
+                    "lychee_reranker.evaluation.cli._build_reranker", return_value=FakeReranker()
+                ),
+            ):
+                aggregate = run(config, "all")
+            self.assertEqual(aggregate, {"cqadupstack": {"ndcg@1": 0.5}})
+            report = json.loads((root / "out" / "summary.json").read_text())
+            self.assertEqual(len(report["tasks"]), 12)
+
     def test_lmeb_group_macro_is_separate_from_leaf_rows(self):
         rows = {
             "Dialogue/ConvoMem/easy": {"ndcg@10": 0.2},

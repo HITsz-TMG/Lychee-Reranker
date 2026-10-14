@@ -1,7 +1,8 @@
 """Exercise the release pipeline on local models and synthetic, public test text.
 
 This is an execution check, not a quality benchmark or full training run.
-All generated data, checkpoints and logs stay in a new --work-dir.
+Generated data, checkpoints and logs stay in a new --work-dir. An explicit
+HF_DATASETS_CACHE may select a local filesystem with working file locks.
 """
 
 from __future__ import annotations
@@ -397,7 +398,7 @@ def main() -> None:
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
     os.environ.setdefault("WANDB_DISABLED", "true")
-    os.environ["HF_DATASETS_CACHE"] = str(work / "cache")
+    os.environ.setdefault("HF_DATASETS_CACHE", str(work / "cache"))
     torch.set_num_threads(4)
     started = time.monotonic()
     report = {

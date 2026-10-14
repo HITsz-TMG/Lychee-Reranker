@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -53,6 +54,13 @@ class _Model:
 
 
 class InferenceTests(unittest.TestCase):
+    def _scorer(self, callback):
+        reranker = object.__new__(LycheeReranker)
+        reranker.batch_size = 5
+        reranker.instruction = "instruction"
+        reranker._predict_batch = callback
+        return reranker
+
     def test_last_unpadded_logits_are_requested_and_gathered(self):
         reranker = object.__new__(LycheeReranker)
         reranker.tokenizer = _Tokenizer()
@@ -78,6 +86,67 @@ class InferenceTests(unittest.TestCase):
         pooled, pooled_mask = LycheeReranker._pool_encoder_chunks(hidden, mask, 2)
         self.assertTrue(torch.allclose(pooled, torch.tensor([[[2.0], [0.0]]])))
         self.assertTrue(torch.equal(pooled_mask, torch.tensor([[1, 0]])))
+
+    def test_oom_backoff_to_one_preserves_every_input_and_order(self):
+        pairs = [("q" * length, str(index)) for index, length in enumerate((1, 5, 2, 4, 3))]
+        attempts = []
+
+        def score(batch, instruction):
+            attempts.append(len(batch))
+            if len(batch) > 1:
+                raise torch.cuda.OutOfMemoryError("synthetic capacity limit")
+            return [int(document) / 10 for _, document in batch]
+
+        reranker = self._scorer(score)
+        with patch("torch.cuda.is_available", return_value=False):
+            result = reranker.predict(pairs)
+        self.assertEqual(result, [0.0, 0.1, 0.2, 0.3, 0.4])
+        self.assertEqual(attempts, [5, 3, 2, 1, 1, 1, 1, 1])
+
+    def test_successful_probe_is_not_scored_twice(self):
+        pairs = [("q" * length, str(index)) for index, length in enumerate((1, 5, 2, 4, 3))]
+        visited = []
+
+        def score(batch, instruction):
+            visited.extend(document for _, document in batch)
+            return [int(document) / 10 for _, document in batch]
+
+        self.assertEqual(self._scorer(score).predict(pairs), [0.0, 0.1, 0.2, 0.3, 0.4])
+        self.assertEqual(len(visited), len(set(visited)))
+
+    def test_model_errors_are_not_misclassified_as_oom(self):
+        attempts = []
+
+        def score(batch, instruction):
+            attempts.append(batch)
+            raise RuntimeError("invalid attention shape")
+
+        with self.assertRaisesRegex(RuntimeError, "invalid attention shape"):
+            self._scorer(score).predict([("query", "document")])
+        self.assertEqual(len(attempts), 1)
+
+    def test_rank_ties_preserve_corpus_indices_and_top_k(self):
+        reranker = self._scorer(lambda batch, instruction: [0.5] * len(batch))
+        result = reranker.rank("q", ["long document", "short", "another document"], top_k=2)
+        self.assertEqual([row["corpus_id"] for row in result], [0, 1])
+        self.assertEqual(reranker.rank("q", []), [])
+        self.assertEqual(reranker.rank("q", ["document"], top_k=0), [])
+
+    def test_invalid_public_inputs_are_rejected_before_scoring(self):
+        def score(batch, instruction):
+            self.fail("invalid inputs reached the model")
+
+        reranker = self._scorer(score)
+        with self.assertRaises(TypeError):
+            reranker.predict("query document")
+        with self.assertRaises(ValueError):
+            reranker.predict([("only query",)])
+        with self.assertRaises(TypeError):
+            reranker.predict([("query", None)])
+        with self.assertRaises(ValueError):
+            reranker.predict([("query", "document")], batch_size=0)
+        with self.assertRaises(ValueError):
+            reranker.rank("q", ["document"], top_k=-1)
 
 
 if __name__ == "__main__":

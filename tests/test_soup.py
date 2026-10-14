@@ -65,8 +65,12 @@ class SoupTests(unittest.TestCase):
     def test_rejects_mixed_floating_dtype(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            first = self._model(root, "a", torch.tensor([1.0], dtype=torch.float32), torch.tensor([1]))
-            second = self._model(root, "b", torch.tensor([2.0], dtype=torch.float16), torch.tensor([1]))
+            first = self._model(
+                root, "a", torch.tensor([1.0], dtype=torch.float32), torch.tensor([1])
+            )
+            second = self._model(
+                root, "b", torch.tensor([2.0], dtype=torch.float16), torch.tensor([1])
+            )
             with self.assertRaisesRegex(ValueError, "dtype/shape"):
                 soup_models([first, second], [0.5, 0.5], root / "out")
             self.assertFalse((root / "out").exists())
@@ -110,7 +114,9 @@ class SoupTests(unittest.TestCase):
                 tensors = load_file(path / "model.safetensors")
                 (path / "model.safetensors").unlink()
                 save_file({"float": tensors["float"]}, path / "model-00001-of-00002.safetensors")
-                save_file({"integer": tensors["integer"]}, path / "model-00002-of-00002.safetensors")
+                save_file(
+                    {"integer": tensors["integer"]}, path / "model-00002-of-00002.safetensors"
+                )
                 (path / "model.safetensors.index.json").write_text(
                     json.dumps(
                         {
@@ -179,12 +185,21 @@ class SoupTests(unittest.TestCase):
             first = self._model(root, "a", torch.tensor([1.0]), torch.tensor([1]))
             second = self._model(root, "b", torch.tensor([3.0]), torch.tensor([1]))
             for path in (first, second):
-                (path / "tokenizer_config.json").write_text('{"model_max_length": 8}', encoding="utf-8")
-                (path / "special_tokens_map.json").write_text('{"pad_token": "<pad>"}', encoding="utf-8")
+                (path / "tokenizer_config.json").write_text(
+                    '{"model_max_length": 8}', encoding="utf-8"
+                )
+                (path / "special_tokens_map.json").write_text(
+                    '{"pad_token": "<pad>"}', encoding="utf-8"
+                )
                 (path / "tokenizer.py").write_text("# synthetic tokenizer code\n", encoding="utf-8")
 
             output = soup_models([first, second], [0.5, 0.5], root / "out")
-            for name in ("tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "tokenizer.py"):
+            for name in (
+                "tokenizer.json",
+                "tokenizer_config.json",
+                "special_tokens_map.json",
+                "tokenizer.py",
+            ):
                 self.assertEqual((output / name).read_bytes(), (first / name).read_bytes())
 
             dangling = root / "dangling"

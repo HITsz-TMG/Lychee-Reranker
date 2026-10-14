@@ -36,7 +36,10 @@ class PromptAndMetricTests(unittest.TestCase):
         self.assertAlmostEqual(map_at_k(qrels["q"], ranked, 1), 0.5)
         self.assertAlmostEqual(map_at_k(qrels["q"], ranked, 2), 0.5)
         self.assertAlmostEqual(map_at_k(qrels["q"], ranked, 3), (1.0 + 2.0 / 3.0) / 2.0)
-        self.assertEqual(evaluate_run(qrels, {"q": {"d1": 0.9, "noise": 0.8, "d2": 0.7}}, ("map@3",)), {"map@3": (1.0 + 2.0 / 3.0) / 2.0})
+        self.assertEqual(
+            evaluate_run(qrels, {"q": {"d1": 0.9, "noise": 0.8, "d2": 0.7}}, ("map@3",)),
+            {"map@3": (1.0 + 2.0 / 3.0) / 2.0},
+        )
 
     def test_tied_metrics_match_pytrec_eval_document_id_order(self):
         try:

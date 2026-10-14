@@ -21,9 +21,7 @@ class DenseEmbedderAttentionTests(unittest.TestCase):
 
             def __call__(self, texts, **kwargs):
                 return {
-                    "input_ids": [
-                        [token_ids[text]] * lengths[text] for text in texts
-                    ],
+                    "input_ids": [[token_ids[text]] * lengths[text] for text in texts],
                     "attention_mask": [[1] * lengths[text] for text in texts],
                 }
 
@@ -35,8 +33,7 @@ class DenseEmbedderAttentionTests(unittest.TestCase):
                     for record in records
                 ]
                 attention_mask = [
-                    record["attention_mask"]
-                    + [0] * (max_length - len(record["attention_mask"]))
+                    record["attention_mask"] + [0] * (max_length - len(record["attention_mask"]))
                     for record in records
                 ]
                 return FakeBatch(
@@ -52,8 +49,10 @@ class DenseEmbedderAttentionTests(unittest.TestCase):
             def __call__(self, input_ids, attention_mask, **kwargs):
                 first = input_ids[:, :1].float()
                 hidden = torch.cat(
-                    [first.expand(-1, input_ids.shape[1]).unsqueeze(-1),
-                     torch.ones_like(input_ids, dtype=torch.float32).unsqueeze(-1)],
+                    [
+                        first.expand(-1, input_ids.shape[1]).unsqueeze(-1),
+                        torch.ones_like(input_ids, dtype=torch.float32).unsqueeze(-1),
+                    ],
                     dim=-1,
                 )
                 return SimpleNamespace(last_hidden_state=hidden)
@@ -79,7 +78,7 @@ class DenseEmbedderAttentionTests(unittest.TestCase):
     def test_pool_matches_flag_mean_pooling_for_low_precision_hidden_states(self):
         hidden_fp32 = torch.tensor(
             [
-                [[1.25, -0.75], [0.5, 2.25], [9.0, 9.0]],
+                [[2048.0, 2048.0], [1.0, 3.0], [9.0, 9.0]],
                 [[-1.5, 0.25], [2.0, -3.0], [4.0, 5.0]],
             ],
             dtype=torch.float32,
@@ -88,9 +87,7 @@ class DenseEmbedderAttentionTests(unittest.TestCase):
         for dtype in (torch.float16, torch.bfloat16):
             low_precision_hidden = hidden_fp32.to(dtype)
             expected = torch.nn.functional.normalize(
-                (
-                    low_precision_hidden * attention_mask.unsqueeze(-1).float()
-                ).sum(dim=1)
+                (low_precision_hidden * attention_mask.unsqueeze(-1).float()).sum(dim=1)
                 / attention_mask.sum(dim=1, keepdim=True).float().clamp(min=1),
                 p=2,
                 dim=-1,

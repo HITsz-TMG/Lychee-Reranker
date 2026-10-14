@@ -7,6 +7,28 @@ from lychee_reranker.evaluation.retrieval import dense_search, dense_search_rest
 
 
 class RetrievalTests(unittest.TestCase):
+    def test_global_search_preserves_real_faiss_ties_and_numpy_untied_parity(self):
+        try:
+            import faiss
+        except ImportError:
+            self.skipTest("FAISS is optional")
+
+        query = np.array([[1.0, 0.0]], dtype=np.float32)
+        documents = np.array([[1.0, 0.0]] * 3, dtype=np.float32)
+        doc_ids = ["b", "a", "c"]
+        index = faiss.IndexFlatIP(2)
+        index.add(documents)
+        _, indices = index.search(query, 3)
+        actual = dense_search(query, documents, ["q"], doc_ids, top_k=3)
+        self.assertEqual(list(actual["q"]), [doc_ids[i] for i in indices[0]])
+
+        documents = np.array([[0.75, 0.0], [0.25, 0.0], [1.0, 0.0]], dtype=np.float32)
+        expected = dense_search(query, documents, ["q"], doc_ids, top_k=2)
+        with patch.dict("sys.modules", {"faiss": None}):
+            fallback = dense_search(query, documents, ["q"], doc_ids, top_k=2)
+        self.assertEqual(list(expected["q"]), ["c", "b"])
+        self.assertEqual(expected, fallback)
+
     def test_dense_search_and_deterministic_tie(self):
         queries = np.array([[1.0, 0.0]], dtype=np.float32)
         documents = np.array([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
@@ -23,9 +45,7 @@ class RetrievalTests(unittest.TestCase):
 
     def test_restricted_search_keeps_source_candidate_order_on_ties(self):
         queries = np.array([[1.0, 0.0]], dtype=np.float32)
-        documents = np.array(
-            [[1.0, 0.0], [1.0, 0.0], [1.0, 0.0]], dtype=np.float32
-        )
+        documents = np.array([[1.0, 0.0], [1.0, 0.0], [1.0, 0.0]], dtype=np.float32)
         result = dense_search_restricted(
             queries,
             documents,

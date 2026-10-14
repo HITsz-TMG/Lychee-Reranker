@@ -75,6 +75,20 @@ class EvaluationDataTests(unittest.TestCase):
             task = load_beir(tmp, "fiqa")[0]
             self.assertEqual(task.qrels, {"q1": {"d1": 2.0}})
 
+    def test_beir_split_directory_jsonl_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "fiqa"
+            split = base / "test"
+            write_jsonl(base / "corpus.jsonl", [{"_id": "d1", "text": "body"}])
+            write_jsonl(split / "test_queries.jsonl", [{"_id": "q1", "text": "query"}])
+            write_jsonl(
+                split / "test_qrels.jsonl",
+                [{"query-id": "q1", "corpus-id": "d1", "score": 1}],
+            )
+            task = load_beir(tmp, "fiqa")[0]
+            self.assertEqual(task.queries, {"q1": "query"})
+            self.assertEqual(task.qrels, {"q1": {"d1": 1.0}})
+
     def test_cqadupstack_incomplete_children_fail(self):
         with tempfile.TemporaryDirectory() as tmp:
             child = Path(tmp) / "cqadupstack" / "android"
@@ -177,9 +191,7 @@ class EvaluationDataTests(unittest.TestCase):
                     {"id": "q-outside", "scene_id": "s", "text": "outside"},
                 ],
             )
-            (leaf / "qrels.tsv").write_text(
-                "q-empty\td1\t0\nq-outside\td2\t1\n", encoding="utf-8"
-            )
+            (leaf / "qrels.tsv").write_text("q-empty\td1\t0\nq-outside\td2\t1\n", encoding="utf-8")
             tasks = load_lmeb(root, ["ConvoMem"])
             self.assertEqual(tasks[0].queries, {})
             self.assertEqual(tasks[0].qrels, {})

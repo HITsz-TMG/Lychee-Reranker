@@ -65,7 +65,8 @@ def dense_search(
         ][:limit]
         if any(not math.isfinite(score) for _, score in pairs):
             raise ValueError(f"{query_id}: retrieval produced a non-finite score")
-        pairs.sort(key=lambda item: (-item[1], item[0]))
+        # Preserve the search backend's order, as the original EvalRetriever
+        # does. A lexical re-sort would change downstream MRR score ties.
         result[query_id] = dict(pairs[:limit])
     return result
 
@@ -93,10 +94,7 @@ def dense_search_restricted(
         raise ValueError("embeddings must be two-dimensional")
     if query_array.shape[1] != document_array.shape[1]:
         raise ValueError("query/document embedding dimensions differ")
-    if (
-        len(query_ids) != query_array.shape[0]
-        or len(document_ids) != document_array.shape[0]
-    ):
+    if len(query_ids) != query_array.shape[0] or len(document_ids) != document_array.shape[0]:
         raise ValueError("embedding counts do not match IDs")
     if not np.isfinite(query_array).all() or not np.isfinite(document_array).all():
         raise ValueError("embeddings must contain only finite values")
@@ -128,10 +126,7 @@ def dense_search_restricted(
         # exact candidate-score vector.  Preserve its quicksort tie order;
         # a lexical or stable secondary key can change top-k membership.
         order = np.argsort(-scores)
-        pairs = [
-            (candidate_pairs[index][0], float(scores[index]))
-            for index in order[:top_k]
-        ]
+        pairs = [(candidate_pairs[index][0], float(scores[index])) for index in order[:top_k]]
         result[query_id] = dict(pairs)
     return result
 
@@ -187,7 +182,9 @@ def rerank(
                 )
         ranked_ids = [
             doc_id
-            for doc_id, _ in sorted(candidate_scores.items(), key=lambda item: item[1], reverse=True)
+            for doc_id, _ in sorted(
+                candidate_scores.items(), key=lambda item: item[1], reverse=True
+            )
         ][:top_k]
         if ignore_identical_ids:
             ranked_ids = [doc_id for doc_id in ranked_ids if doc_id != query_id]

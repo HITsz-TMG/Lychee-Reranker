@@ -202,13 +202,9 @@ def load_beir(root: str | Path, dataset: str, split: str = "test") -> List[Evalu
             "wordpress",
         }
         child_leaves = [path for path in leaves if path != base]
-        nested_leaves = [
-            path for path in child_leaves if len(path.relative_to(base).parts) != 1
-        ]
+        nested_leaves = [path for path in child_leaves if len(path.relative_to(base).parts) != 1]
         available = {
-            path.relative_to(base).parts[0]
-            for path in child_leaves
-            if path.relative_to(base).parts
+            path.relative_to(base).parts[0] for path in child_leaves if path.relative_to(base).parts
         }
         if available != expected or nested_leaves:
             raise ValueError(
@@ -225,8 +221,16 @@ def load_beir(root: str | Path, dataset: str, split: str = "test") -> List[Evalu
         queries_path = leaf / f"{split}_queries.jsonl"
         if not queries_path.is_file():
             queries_path = leaf / "queries.jsonl"
+        if not queries_path.is_file():
+            # Some archived BEIR exports put the split files below an
+            # explicit split directory while keeping corpus.jsonl at the
+            # dataset root.  Preserve the flat layout priority above and
+            # support only this exact fallback.
+            queries_path = leaf / split / f"{split}_queries.jsonl"
         jsonl_qrels_path = leaf / f"{split}_qrels.jsonl"
         tsv_qrels_path = leaf / "qrels" / f"{split}.tsv"
+        if not jsonl_qrels_path.is_file() and not tsv_qrels_path.is_file():
+            jsonl_qrels_path = leaf / split / f"{split}_qrels.jsonl"
         if jsonl_qrels_path.is_file():
             qrels = _load_jsonl_qrels(
                 jsonl_qrels_path,
@@ -238,7 +242,8 @@ def load_beir(root: str | Path, dataset: str, split: str = "test") -> List[Evalu
             qrels = _load_tsv_qrels(tsv_qrels_path)
         else:
             raise FileNotFoundError(
-                f"could not find {split}_qrels.jsonl or qrels/{split}.tsv below {leaf}"
+                f"could not find {split}_qrels.jsonl, qrels/{split}.tsv, or "
+                f"{split}/{split}_qrels.jsonl below {leaf}"
             )
         task = EvaluationTask(
             name=f"{dataset}{suffix}",
