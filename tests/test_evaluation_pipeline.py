@@ -125,6 +125,43 @@ class EvaluationPipelineTests(unittest.TestCase):
         self.assertEqual(set(aggregate), {"cqadupstack", "fiqa"})
         self.assertAlmostEqual(aggregate["cqadupstack"]["ndcg@10"], 0.3)
 
+    def test_candidate_reuse_preserves_ties_at_rerank_cutoff(self):
+        task = EvaluationTask(
+            name="fiqa",
+            benchmark="beir",
+            split="test",
+            corpus={"a": "noise", "z": "relevant"},
+            queries={"q": "query"},
+            qrels={"q": {"z": 1}},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = {
+                "benchmark": "beir",
+                "output_dir": str(root / "all"),
+                "metrics": ["ndcg@1", "mrr@1"],
+                "retrieval_top_k": 2,
+                "rerank_top_k": 1,
+            }
+            with (
+                patch("lychee_reranker.evaluation.cli._tasks", return_value=[task]),
+                patch(
+                    "lychee_reranker.evaluation.cli._build_embedder", return_value=FakeEmbedder()
+                ),
+                patch(
+                    "lychee_reranker.evaluation.cli._build_reranker", return_value=FakeReranker()
+                ),
+                patch(
+                    "lychee_reranker.evaluation.cli.dense_search",
+                    return_value={"q": {"z": 0.5, "a": 0.5}},
+                ),
+            ):
+                first = run(config, "all")
+                config["output_dir"] = str(root / "reuse")
+                second = run(config, "rerank", candidate_dir=str(root / "all" / "candidates"))
+            self.assertEqual(first, {"fiqa": {"ndcg@1": 1.0, "mrr@1": 1.0}})
+            self.assertEqual(second, first)
+
     def test_complete_cqadupstack_pipeline_averages_all_twelve_children(self):
         children = (
             "android",

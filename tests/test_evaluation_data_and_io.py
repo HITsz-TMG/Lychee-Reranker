@@ -4,8 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lychee_reranker.evaluation.data import load_beir, load_lmeb, load_miracl
+from lychee_reranker.evaluation.data import EvaluationTask, load_beir, load_lmeb, load_miracl
 from lychee_reranker.evaluation.io import read_run, stable_digest, write_run
+from lychee_reranker.evaluation.metrics import evaluate_run
 
 
 def write_jsonl(path, rows):
@@ -74,6 +75,34 @@ class EvaluationDataTests(unittest.TestCase):
             )
             task = load_beir(tmp, "fiqa")[0]
             self.assertEqual(task.qrels, {"q1": {"d1": 2.0}})
+
+    def test_run_round_trip_preserves_tied_rankings_and_mrr(self):
+        task = EvaluationTask(
+            name="fiqa",
+            benchmark="beir",
+            split="test",
+            corpus={"a": "relevant", "z": "noise", "first": "noise"},
+            queries={"q": "query"},
+            qrels={"q": {"a": 1}},
+        )
+        scores = {"q": {"z": 0.5, "a": 0.5, "first": 0.9}}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run.json"
+            write_run(
+                path,
+                task=task,
+                run=scores,
+                kind="reranked",
+                model={"id": "toy"},
+                config_digest="test",
+            )
+            restored = read_run(path, expected_task=task)
+        self.assertEqual(list(restored["q"]), ["first", "z", "a"])
+        self.assertEqual(evaluate_run(task.qrels, restored, ["mrr@3"]), {"mrr@3": 1 / 3})
+        self.assertEqual(
+            evaluate_run(task.qrels, restored, ["mrr@3", "ndcg@3"]),
+            evaluate_run(task.qrels, scores, ["mrr@3", "ndcg@3"]),
+        )
 
     def test_beir_split_directory_jsonl_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:

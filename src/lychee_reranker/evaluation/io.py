@@ -96,7 +96,8 @@ def write_run(
         "results": {
             query_id: [
                 {"doc_id": doc_id, "score": score}
-                for doc_id, score in sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+                # Keep backend/candidate order for ties across save and reuse.
+                for doc_id, score in sorted(scores.items(), key=lambda item: item[1], reverse=True)
             ]
             for query_id, scores in sorted(run.items())
         },
