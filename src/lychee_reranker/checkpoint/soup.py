@@ -3,105 +3,42 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
-import shutil
-import tempfile
+import math
 from collections import OrderedDict
+from collections.abc import Mapping, Sequence
+from contextlib import ExitStack
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-
-TOKENIZER_FILES = (
-    "tokenizer.json",
-    "tokenizer_config.json",
-    "special_tokens_map.json",
-    "spiece.model",
-    "tokenizer.model",
-    "added_tokens.json",
-    "generation_config.json",
+from ._common import (
+    TOKENIZER_EXACT_FILES,
+    check_finite_tensor,
+    copy_relevant_metadata,
+    file_digest,
+    relevant_metadata_files,
+    semantic_config,
+    staged_output,
+    tensor_metadata,
+    tokenizer_fingerprint,
+    weight_map,
 )
 
-
-def _semantic_config(path: Path) -> Mapping[str, object]:
-    config_path = path / "config.json"
-    if not config_path.is_file():
-        raise FileNotFoundError(f"config.json not found in {path}")
-    config = json.loads(config_path.read_text(encoding="utf-8"))
-    for volatile in ("_name_or_path", "transformers_version"):
-        config.pop(volatile, None)
-    return config
+# Retain this exported name for callers that used the first release helper.
+TOKENIZER_FILES = tuple(sorted(TOKENIZER_EXACT_FILES))
 
 
-def _file_digest(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+# Keep private compatibility aliases for the original focused package tests.
+_semantic_config = semantic_config
+_file_digest = file_digest
+_tokenizer_fingerprint = tokenizer_fingerprint
+_weight_map = weight_map
+_tensor_metadata = tensor_metadata
 
 
-def _tokenizer_fingerprint(path: Path) -> Mapping[str, str]:
-    return {name: _file_digest(path / name) for name in TOKENIZER_FILES if (path / name).is_file()}
-
-
-def _weight_map(model_dir: Path) -> Dict[str, Path]:
-    index_path = model_dir / "model.safetensors.index.json"
-    if index_path.is_file():
-        index = json.loads(index_path.read_text(encoding="utf-8"))
-        mapping = index.get("weight_map")
-        if not isinstance(mapping, dict) or not mapping:
-            raise ValueError(f"invalid safetensors index: {index_path}")
-        return {key: model_dir / filename for key, filename in mapping.items()}
-    single = model_dir / "model.safetensors"
-    if not single.is_file():
-        raise FileNotFoundError(f"model.safetensors or its index not found in {model_dir}")
-    from safetensors import safe_open
-
-    with safe_open(single, framework="pt", device="cpu") as handle:
-        return {key: single for key in handle.keys()}
-
-
-def _tensor_metadata(
-    weight_map: Mapping[str, Path],
-) -> Dict[str, Tuple[object, Tuple[int, ...], int]]:
-    from safetensors import safe_open
-
-    result = {}
-    readers = {}
-    try:
-        for key, path in weight_map.items():
-            reader = readers.get(path)
-            if reader is None:
-                reader = safe_open(path, framework="pt", device="cpu")
-                readers[path] = reader
-            tensor = reader.get_slice(key)
-            shape = tuple(tensor.get_shape())
-            dtype = tensor.get_dtype()
-            # Safetensors dtype strings use standard widths except BOOL.
-            bits = {
-                "BOOL": 8,
-                "U8": 8,
-                "I8": 8,
-                "I16": 16,
-                "I32": 32,
-                "I64": 64,
-                "F16": 16,
-                "BF16": 16,
-                "F32": 32,
-                "F64": 64,
-            }.get(str(dtype), 32)
-            count = 1
-            for dimension in shape:
-                count *= dimension
-            result[key] = (dtype, shape, count * bits // 8)
-    finally:
-        readers.clear()
-    return result
-
-
-def _shard_plan(metadata: Mapping[str, Tuple[object, Tuple[int, ...], int]], max_bytes: int):
-    shards: List[List[str]] = []
-    current: List[str] = []
+def _shard_plan(
+    metadata: Mapping[str, tuple[str, tuple[int, ...], int]], max_bytes: int
+) -> list[list[str]]:
+    shards: list[list[str]] = []
+    current: list[str] = []
     current_size = 0
     for key in sorted(metadata):
         size = metadata[key][2]
@@ -115,6 +52,67 @@ def _shard_plan(metadata: Mapping[str, Tuple[object, Tuple[int, ...], int]], max
     return shards
 
 
+def _normalise_weights(weights: Sequence[float]) -> list[float]:
+    values = []
+    for weight in weights:
+        if isinstance(weight, bool):
+            raise TypeError("weights must be finite non-negative numbers")
+        try:
+            value = float(weight)
+        except (TypeError, ValueError) as error:
+            raise ValueError("weights must be finite non-negative numbers") from error
+        if not math.isfinite(value) or value < 0:
+            raise ValueError("weights must be finite non-negative numbers")
+        values.append(value)
+    total = math.fsum(values)
+    if total <= 0:
+        raise ValueError("weights must have a positive finite sum")
+    return [value / total for value in values]
+
+
+def _validate_inputs(
+    model_paths: Sequence[str | Path], weights: Sequence[float]
+) -> tuple[list[Path], list[float], list[dict[str, object]], list[dict[str, str]]]:
+    if isinstance(model_paths, (str, Path)):
+        raise TypeError("model_paths must contain at least two model directories")
+    if isinstance(weights, (str, bytes)):
+        raise TypeError("weights must contain one numeric value per model")
+    if len(model_paths) < 2 or len(model_paths) != len(weights):
+        raise ValueError("provide at least two models and one weight per model")
+    normalized = _normalise_weights(weights)
+    models = [Path(path) for path in model_paths]
+    missing = [str(path) for path in models if not path.is_dir()]
+    if missing:
+        raise FileNotFoundError(f"model directories not found: {missing}")
+    resolved = [path.resolve() for path in models]
+    if len(set(resolved)) != len(resolved):
+        raise ValueError("duplicate model paths are not valid soup inputs")
+
+    configs = []
+    tokenizers = []
+    maps = []
+    for path in models:
+        configs.append(semantic_config(path))
+        tokenizers.append(tokenizer_fingerprint(path))
+        maps.append(weight_map(path))
+    reference_keys = set(maps[0])
+    for index, (path, config, tokenizer, mapping) in enumerate(
+        zip(models[1:], configs[1:], tokenizers[1:], maps[1:]), start=1
+    ):
+        if config != configs[0]:
+            raise ValueError(f"model config differs: {path}")
+        if tokenizer != tokenizers[0]:
+            raise ValueError(f"tokenizer files differ: {path}")
+        if set(mapping) != reference_keys:
+            raise ValueError(f"tensor keys differ: {path}")
+    metadata = [tensor_metadata(mapping) for mapping in maps]
+    for key in reference_keys:
+        signatures = [(item[key][0], item[key][1]) for item in metadata]
+        if any(signature != signatures[0] for signature in signatures[1:]):
+            raise ValueError(f"tensor dtype/shape differs for key {key}")
+    return models, normalized, metadata, maps
+
+
 def soup_models(
     model_paths: Sequence[str | Path],
     weights: Sequence[float],
@@ -123,53 +121,29 @@ def soup_models(
     max_shard_size_gb: float = 5.0,
 ) -> Path:
     """Create a strict tensor-wise model soup from merged safetensors models."""
+
     import torch
     from safetensors import safe_open
     from safetensors.torch import save_file
 
-    if len(model_paths) < 2 or len(model_paths) != len(weights):
-        raise ValueError("provide at least two models and one weight per model")
-    if any(weight < 0 for weight in weights) or sum(weights) <= 0:
-        raise ValueError("weights must be non-negative with a positive sum")
-    normalized = [float(weight) / sum(weights) for weight in weights]
-    models = [Path(path) for path in model_paths]
-    if any(not path.is_dir() for path in models):
-        missing = [str(path) for path in models if not path.is_dir()]
-        raise FileNotFoundError(f"model directories not found: {missing}")
-    destination = Path(output_dir)
-    if destination.exists():
-        raise FileExistsError(f"refusing to overwrite output directory: {destination}")
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        shard_size = float(max_shard_size_gb)
+    except (TypeError, ValueError) as error:
+        raise ValueError("max_shard_size_gb must be a positive finite number") from error
+    if not math.isfinite(shard_size) or shard_size <= 0:
+        raise ValueError("max_shard_size_gb must be a positive finite number")
 
-    reference_config = _semantic_config(models[0])
-    reference_tokenizer = _tokenizer_fingerprint(models[0])
-    if not reference_tokenizer:
-        raise FileNotFoundError(f"no tokenizer files found in {models[0]}")
-    maps = [_weight_map(path) for path in models]
+    models, normalized, metadata, maps = _validate_inputs(model_paths, weights)
     keys = set(maps[0])
-    for path, mapping in zip(models[1:], maps[1:]):
-        if _semantic_config(path) != reference_config:
-            raise ValueError(f"model config differs: {path}")
-        if _tokenizer_fingerprint(path) != reference_tokenizer:
-            raise ValueError(f"tokenizer files differ: {path}")
-        if set(mapping) != keys:
-            raise ValueError(f"tensor keys differ: {path}")
-
-    metadata = [_tensor_metadata(mapping) for mapping in maps]
-    for key in keys:
-        signatures = [(item[key][0], item[key][1]) for item in metadata]
-        if any(signature != signatures[0] for signature in signatures[1:]):
-            raise ValueError(f"tensor dtype/shape differs for key {key}")
-    max_bytes = int(max_shard_size_gb * 1024**3)
+    max_bytes = int(shard_size * 1024**3)
     if max_bytes <= 0:
-        raise ValueError("max_shard_size_gb must be positive")
+        raise ValueError("max_shard_size_gb is too small to represent one byte")
     shard_keys = _shard_plan(metadata[0], max_bytes)
+    reference_config = semantic_config(models[0])
+    total_size = sum(value[2] for value in metadata[0].values())
 
-    with tempfile.TemporaryDirectory(prefix=f".{destination.name}.", dir=destination.parent) as tmp:
-        temporary = Path(tmp) / "model"
-        temporary.mkdir()
-        weight_index: Dict[str, str] = {}
-        total_size = sum(value[2] for value in metadata[0].values())
+    with staged_output(output_dir) as temporary:
+        weight_index: dict[str, str] = {}
         for shard_number, names in enumerate(shard_keys, start=1):
             filename = (
                 "model.safetensors"
@@ -177,52 +151,70 @@ def soup_models(
                 else f"model-{shard_number:05d}-of-{len(shard_keys):05d}.safetensors"
             )
             output_tensors = OrderedDict()
-            for key in names:
-                tensors = []
-                for mapping in maps:
-                    with safe_open(mapping[key], framework="pt", device="cpu") as handle:
-                        tensors.append(handle.get_tensor(key))
-                reference = tensors[0]
-                if reference.is_floating_point():
-                    merged = sum(
-                        weight * tensor.float() for weight, tensor in zip(normalized, tensors)
-                    )
-                    output_tensors[key] = merged.to(reference.dtype).contiguous()
-                else:
-                    if any(not torch.equal(reference, tensor) for tensor in tensors[1:]):
-                        raise ValueError(f"non-floating tensor differs for key {key}")
-                    output_tensors[key] = reference.contiguous()
-                weight_index[key] = filename
+            with ExitStack() as stack:
+                handles = {}
+                for key in names:
+                    for mapping in maps:
+                        source = mapping[key]
+                        if source not in handles:
+                            handles[source] = stack.enter_context(
+                                safe_open(source, framework="pt", device="cpu")
+                            )
+                for key in names:
+                    tensors = [handles[mapping[key]].get_tensor(key) for mapping in maps]
+                    reference = tensors[0]
+                    for model_number, tensor in enumerate(tensors):
+                        check_finite_tensor(tensor, f"model[{model_number}]:{key}")
+                    if reference.is_floating_point():
+                        accumulator_dtype = (
+                            torch.float64 if reference.dtype == torch.float64 else torch.float32
+                        )
+                        merged = torch.zeros(
+                            reference.shape, dtype=accumulator_dtype, device="cpu"
+                        )
+                        for weight, tensor in zip(normalized, tensors):
+                            merged.add_(tensor.to(accumulator_dtype), alpha=weight)
+                        output_tensor = merged.to(reference.dtype).contiguous()
+                        check_finite_tensor(output_tensor, f"soup:{key}")
+                        output_tensors[key] = output_tensor
+                    else:
+                        if any(not torch.equal(reference, tensor) for tensor in tensors[1:]):
+                            raise ValueError(f"non-floating tensor differs for key {key}")
+                        output_tensors[key] = reference.contiguous()
+                    weight_index[key] = filename
             save_file(output_tensors, temporary / filename, metadata={"format": "pt"})
             del output_tensors
+
         if len(shard_keys) > 1:
             index = {"metadata": {"total_size": total_size}, "weight_map": weight_index}
             (temporary / "model.safetensors.index.json").write_text(
                 json.dumps(index, indent=2, sort_keys=True) + "\n", encoding="utf-8"
             )
-        for name in ("config.json",) + TOKENIZER_FILES:
-            source = models[0] / name
-            if source.is_file():
-                shutil.copy2(source, temporary / name)
+        copy_relevant_metadata(models[0], temporary)
+        output_config = semantic_config(temporary)
+        if output_config != reference_config:
+            raise ValueError("soup output config differs from the reference model config")
+
         manifest = {
             "schema_version": 1,
             "operation": "model_soup",
             "models": [str(path.resolve()) for path in models],
             "weights": normalized,
+            "model_type": reference_config["model_type"],
             "tensor_count": len(keys),
             "total_size": total_size,
             "config_sha256": hashlib.sha256(
                 json.dumps(reference_config, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest(),
+            "metadata_files": [candidate.name for candidate in relevant_metadata_files(models[0])],
         }
         (temporary / "soup_manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
-        os.replace(temporary, destination)
-    return destination
+    return Path(output_dir)
 
 
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Average merged Lychee-Reranker checkpoints")
     parser.add_argument("--model", action="append", required=True, help="repeat for every model")
     parser.add_argument("--weight", action="append", required=True, type=float)
@@ -231,7 +223,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Optional[Sequence[str]] = None) -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     soup_models(
         args.model,
