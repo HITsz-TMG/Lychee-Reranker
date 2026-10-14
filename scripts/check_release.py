@@ -138,7 +138,9 @@ def _git_prefix(root: Path) -> list[str]:
 
 
 def _git_bytes(root: Path, *arguments: str, input_bytes: bytes | None = None) -> bytes:
-    command = ["git", "-c", "safe.directory=*", *_git_prefix(root), *arguments]
+    # The explicit worktree/git-dir pair is precise for both ordinary and
+    # linked worktrees; no global safe-directory trust is needed.
+    command = ["git", *_git_prefix(root), *arguments]
     try:
         result = subprocess.run(
             command,
@@ -173,20 +175,18 @@ def _index_entries(root: Path) -> list[tuple[str, str, str]]:
     return entries
 
 
-def _batch_blobs(root: Path, object_ids: Iterable[str]) -> dict[str, tuple[int, bytes]]:
+def _batch_blob_sizes(root: Path, object_ids: Iterable[str]) -> dict[str, int]:
     unique_ids = sorted(set(object_ids))
     if not unique_ids:
         return {}
     payload = ("\n".join(unique_ids) + "\n").encode("ascii")
-    output = _git_bytes(root, "cat-file", "--batch", input_bytes=payload)
-    result: dict[str, tuple[int, bytes]] = {}
-    offset = 0
-    for expected in unique_ids:
-        header_end = output.find(b"\n", offset)
-        if header_end < 0:
-            raise RuntimeError("truncated Git object response")
-        header = output[offset:header_end].split()
-        offset = header_end + 1
+    output = _git_bytes(root, "cat-file", "--batch-check", input_bytes=payload)
+    lines = output.splitlines()
+    if len(lines) != len(unique_ids):
+        raise RuntimeError("truncated Git object response")
+    result: dict[str, int] = {}
+    for expected, line in zip(unique_ids, lines):
+        header = line.split()
         if len(header) != 3 or header[0].decode("ascii") != expected:
             raise RuntimeError("unexpected Git object response")
         object_type = header[1].decode("ascii")
@@ -196,6 +196,40 @@ def _batch_blobs(root: Path, object_ids: Iterable[str]) -> dict[str, tuple[int, 
             raise RuntimeError("invalid Git object size") from error
         if object_type != "blob":
             raise RuntimeError("release index contains a non-blob entry")
+        result[expected] = size
+    return result
+
+
+def _batch_blobs(root: Path, object_ids: Iterable[str]) -> dict[str, tuple[int, bytes | None]]:
+    """Return sizes for all blobs and bytes only for blobs below the size cap."""
+
+    sizes = _batch_blob_sizes(root, object_ids)
+    readable_ids = [object_id for object_id, size in sizes.items() if size <= MAX_FILE_SIZE]
+    result: dict[str, tuple[int, bytes | None]] = {
+        object_id: (size, None) for object_id, size in sizes.items()
+    }
+    if not readable_ids:
+        return result
+
+    payload = ("\n".join(readable_ids) + "\n").encode("ascii")
+    output = _git_bytes(root, "cat-file", "--batch", input_bytes=payload)
+    offset = 0
+    for expected in readable_ids:
+        header_end = output.find(b"\n", offset)
+        if header_end < 0:
+            raise RuntimeError("truncated Git object response")
+        header = output[offset:header_end].split()
+        offset = header_end + 1
+        if len(header) != 3 or header[0].decode("ascii") != expected:
+            raise RuntimeError("unexpected Git object response")
+        if header[1] != b"blob":
+            raise RuntimeError("release index contains a non-blob entry")
+        try:
+            size = int(header[2])
+        except ValueError as error:
+            raise RuntimeError("invalid Git object size") from error
+        if size != sizes[expected]:
+            raise RuntimeError("Git object size changed during release scan")
         data = output[offset : offset + size]
         if len(data) != size or output[offset + size : offset + size + 1] != b"\n":
             raise RuntimeError("truncated Git blob response")
@@ -214,6 +248,14 @@ def _metadata_labels(name: str, size: int) -> list[str]:
 
 
 def _scan_content(data: bytes, scope: str, name: str, errors: _Errors) -> None:
+    if b"\0" in data:
+        errors.add(scope, name, "binary file")
+        return
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        errors.add(scope, name, "binary file")
+        return
     for label, pattern in _PATTERNS:
         if pattern.search(data):
             errors.add(scope, name, label)
@@ -226,7 +268,7 @@ def _scan_content(data: bytes, scope: str, name: str, errors: _Errors) -> None:
 
 def _scan_blob_entries(
     entries: Iterable[tuple[str, str, str]],
-    blobs: dict[str, tuple[int, bytes]],
+    blobs: dict[str, tuple[int, bytes | None]],
     scope: str,
     errors: _Errors,
 ) -> int:
@@ -240,6 +282,8 @@ def _scan_blob_entries(
         for label in labels:
             errors.add(scope, name, label)
         if not labels:
+            if data is None:
+                raise RuntimeError("release blob content was not loaded")
             _scan_content(data, scope, name, errors)
     return checked
 
@@ -281,10 +325,13 @@ def _scan_worktree(root: Path, errors: _Errors) -> int:
     return checked
 
 
-def _history_entries(root: Path) -> list[tuple[str, str, str, str]]:
+def _history_commits(root: Path) -> list[str]:
+    return _git_bytes(root, "rev-list", "--topo-order", "HEAD").decode("ascii").splitlines()
+
+
+def _history_entries(root: Path, commits: Iterable[str]) -> list[tuple[str, str, str, str]]:
     """Collect ``(commit, mode, object ID, path)`` entries reachable from HEAD."""
 
-    commits = _git_bytes(root, "rev-list", "--topo-order", "HEAD").decode("ascii").splitlines()
     entries = []
     for commit in commits:
         tree = _git_bytes(root, "ls-tree", "-r", "-z", "--full-tree", commit)
@@ -310,10 +357,16 @@ def _history_entries(root: Path) -> list[tuple[str, str, str, str]]:
 
 
 def _scan_history(root: Path, errors: _Errors) -> int:
-    entries = _history_entries(root)
+    commits = _history_commits(root)
+    checked = 0
+    for commit in commits:
+        message = _git_bytes(root, "show", "-s", "--format=%B", "--no-patch", commit)
+        _scan_content(message, f"history:{commit[:12]}", "<commit-message>", errors)
+    checked += len(commits)
+
+    entries = _history_entries(root, commits)
     object_ids = [object_id for _commit, _mode, object_id, _name in entries]
     blobs = _batch_blobs(root, object_ids)
-    checked = 0
     for commit, mode, object_id, name in entries:
         checked += 1
         size, data = blobs[object_id]

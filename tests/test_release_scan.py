@@ -2,6 +2,7 @@ import importlib.util
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -27,7 +28,7 @@ class ReleaseScanTests(unittest.TestCase):
         root = Path(temporary.name)
         self._git(root, "init", "-q")
         self._git(root, "config", "user.name", "release scanner")
-        self._git(root, "config", "user.email", "scanner@example.invalid")
+        self._git(root, "config", "user.email", "100766299+release@users.noreply.github.com")
         return temporary, root
 
     def test_checks_staged_blob_and_worktree_separately_without_printing_values(self):
@@ -61,6 +62,12 @@ class ReleaseScanTests(unittest.TestCase):
             self._git(root, "commit", "-qm", "base")
             self._git(root, "branch", "-M", "main")
 
+            commit_token = "ghp_" + "m" * 24
+            (root / "commit-message.txt").write_text("safe\n", encoding="utf-8")
+            self._git(root, "add", "commit-message.txt")
+            commit_message = "release " + "api" + "_" + "key=" + commit_token
+            self._git(root, "commit", "-qm", commit_message)
+
             self._git(root, "checkout", "-qb", "private-worker")
             side_path = "/" + "home" + "/worker/side"
             (root / "side.txt").write_text(side_path, encoding="utf-8")
@@ -81,11 +88,31 @@ class ReleaseScanTests(unittest.TestCase):
 
             errors, _ = CHECK_RELEASE.scan_repository(root, history=True)
             joined = "\n".join(errors)
+            self.assertIn("<commit-message>: access token", joined)
             self.assertIn("deleted.txt: private absolute path", joined)
             self.assertIn("historical-link: symlink", joined)
             self.assertNotIn("side.txt", joined)
             self.assertNotIn(historical_path, joined)
             self.assertNotIn(side_path, joined)
+            self.assertNotIn(commit_token, joined)
+
+    def test_oversized_index_blob_is_size_checked_without_content_fetch(self):
+        temporary, root = self._repo()
+        with temporary:
+            large = root / "large.txt"
+            large.write_bytes(b"x" * (CHECK_RELEASE.MAX_FILE_SIZE + 1))
+            self._git(root, "add", "large.txt")
+            with mock.patch.object(CHECK_RELEASE, "_git_bytes", wraps=CHECK_RELEASE._git_bytes) as git:
+                errors, _ = CHECK_RELEASE.scan_repository(root)
+
+            joined = "\n".join(errors)
+            self.assertIn("large.txt: generated artifact", joined)
+            batch_calls = [
+                call
+                for call in git.call_args_list
+                if "cat-file" in call.args and "--batch" in call.args
+            ]
+            self.assertEqual(batch_calls, [])
 
     def test_symlink_artifact_and_credential_patterns_are_fail_closed(self):
         temporary, root = self._repo()
@@ -93,6 +120,8 @@ class ReleaseScanTests(unittest.TestCase):
             dangling = root / "dangling-link"
             dangling.symlink_to("/" + "tmp" + "/missing-fixture")
             (root / "weights.safetensors").write_bytes(b"fixture weights")
+            (root / "opaque.data").write_bytes(b"header\0payload")
+            (root / "legacy.data").write_bytes(b"header" + bytes([0xFF]))
             secret = "AKIA" + "A" * 16
             private_key_marker = "BEGIN " + "PRIVATE KEY"
             aws_assignment = "AWS_" + "SECRET" + "_ACCESS_KEY=" + "z" * 24
@@ -109,6 +138,8 @@ class ReleaseScanTests(unittest.TestCase):
             joined = "\n".join(errors)
             self.assertIn("dangling-link: symlink", joined)
             self.assertIn("weights.safetensors: generated artifact", joined)
+            self.assertIn("opaque.data: binary file", joined)
+            self.assertIn("legacy.data: binary file", joined)
             self.assertIn("credentials.txt: private key", joined)
             self.assertIn("credentials.txt: cloud credential", joined)
             self.assertIn("credentials.txt: credential assignment", joined)
