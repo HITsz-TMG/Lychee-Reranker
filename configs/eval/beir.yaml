@@ -1,0 +1,22 @@
+benchmark: beir
+data_dir: data/beir
+output_dir: results/beir
+split: test
+tasks: [arguana, climate-fever, cqadupstack, dbpedia-entity, fever, fiqa, hotpotqa, msmarco, nfcorpus, nq, quora, scidocs, scifact]
+retrieval_top_k: 100
+rerank_top_k: 100
+metrics: [ndcg@10, ndcg@100, recall@10, recall@100]
+embedder:
+  model_name_or_path: KaLM-Embedding/KaLM-embedding-multilingual-mini-instruct-v2.5
+  revision: null
+  max_length: 512
+  batch_size: 64
+  trust_remote_code: false
+reranker:
+  model_name_or_path: models/Lychee-Reranker-V1-Nano
+  revision: null
+  query_max_length: 512
+  max_length: 1024
+  chunk_size: 4
+  batch_size: 32
+  trust_remote_code: false

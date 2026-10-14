@@ -1,0 +1,14 @@
+# Environment used to validate the original Lychee-Reranker-V1 code path.
+# Install a PyTorch build compatible with the local CUDA driver.
+torch==2.8.0
+transformers==5.3.0
+datasets==4.8.4
+accelerate==1.13.0
+peft==0.18.1
+deepspeed==0.18.8
+pyarrow==23.0.1
+numpy==2.3.4
+PyYAML==6.0.3
+safetensors==0.6.2
+tqdm==4.67.1
+faiss-cpu==1.12.0

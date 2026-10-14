@@ -1,0 +1,35 @@
+model:
+  name_or_path: outputs/large/sft-merged
+  revision: null
+  trust_remote_code: false
+  dtype: bfloat16
+  attn_implementation: sdpa
+  chunk_sizes: [2, 8, 32, 128]
+  chunk_loss_weights: [1.0, 1.0, 1.0, 1.0]
+  lora: {rank: 64, alpha: 32, dropout: 0.1, target_modules: [q_proj, k_proj, v_proj, out_proj]}
+data:
+  train_data: [data/distillation]
+  train_group_size: 16
+  query_max_length: 128
+  passage_max_length: 512
+  pad_to_multiple_of: 8
+  knowledge_distillation: true
+training:
+  seed: 42
+  data_seed: 42
+  output_dir: outputs/large/kd-r64-adapter
+  num_train_epochs: 1
+  learning_rate: 0.0002
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 4
+  warmup_ratio: 0.1
+  weight_decay: 0.00001
+  bf16: true
+  gradient_checkpointing: true
+  dataloader_drop_last: true
+  logging_steps: 1
+  save_steps: 1350
+  save_safetensors: true
+  report_to: none
+  overwrite_output_dir: true
+  deepspeed: configs/deepspeed/stage0.json
