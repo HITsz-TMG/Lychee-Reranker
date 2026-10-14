@@ -25,7 +25,7 @@ def discover_data_files(paths: Sequence[str | os.PathLike[str]]) -> List[Path]:
     for raw_path in paths:
         path = Path(raw_path).expanduser()
         if path.is_file():
-            if path.suffix.lower() not in SUPPORTED_SUFFIXES:
+            if path.suffix.lower() not in SUPPORTED_SUFFIXES or ".complete." in path.name:
                 raise ValueError(f"unsupported training file: {path}")
             found.append(path)
         elif path.is_dir():

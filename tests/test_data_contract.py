@@ -139,6 +139,13 @@ class DataContractTests(unittest.TestCase):
             self.assertEqual(discover_data_files([path, path]), [path, path])
             self.assertEqual(len(load_hf_dataset([path, path])), 2)
 
+    def test_explicit_completion_marker_is_not_training_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "train.complete.jsonl"
+            path.write_text(json.dumps(VALID) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unsupported training file"):
+                discover_data_files([path])
+
 
 if __name__ == "__main__":
     unittest.main()
