@@ -395,16 +395,30 @@ def load_lmeb(root: str | Path, groups: Sequence[str]) -> List[EvaluationTask]:
     tasks = []
     if isinstance(groups, str):
         groups = [groups]
-    requested = {str(group).casefold() for group in groups}
+    requested_names = {}
+    for group in groups:
+        display_name = str(group)
+        normalized_name = display_name.replace("\\", "/").strip("/").casefold()
+        requested_names.setdefault(normalized_name, display_name)
+    requested = set(requested_names)
+    matched_requests = set()
     for queries_path in sorted(base.rglob("queries.jsonl")):
         leaf = queries_path.parent
         relative_name = leaf.relative_to(base).as_posix()
+        normalized_relative_name = relative_name.casefold()
         relative_parts = {part.casefold() for part in relative_name.split("/")}
-        if requested and relative_name.casefold() not in requested and not (requested & relative_parts):
+        matching_requests = {
+            selector
+            for selector in requested
+            if selector == normalized_relative_name or selector in relative_parts
+        }
+        if requested and not matching_requests:
             continue
         qrels_path = leaf / "qrels.tsv"
         if not qrels_path.is_file():
-            continue
+            raise FileNotFoundError(
+                f"{qrels_path}: LMEB leaf {relative_name} has queries.jsonl but no qrels.tsv"
+            )
         corpus_path = _nearest_parent_file(leaf, base, "corpus.jsonl")
         candidates_path = _nearest_parent_file(leaf, base, "candidates.jsonl")
         queries, metadata = _load_queries(queries_path, ("_id", "id", "query_id", "qid"))
@@ -470,6 +484,13 @@ def load_lmeb(root: str | Path, groups: Sequence[str]) -> List[EvaluationTask]:
             instructions={str(k): str(v) for k, v in task_instructions.items()},
         )
         tasks.append(_require_consistent(task))
+        matched_requests.update(matching_requests)
+    missing_requests = requested - matched_requests
+    if missing_requests:
+        missing_names = [requested_names[selector] for selector in sorted(missing_requests)]
+        raise FileNotFoundError(
+            f"no matching LMEB leaves found for requested groups/leaves: {missing_names}"
+        )
     if not tasks:
         raise FileNotFoundError(f"no matching LMEB leaves found below {base}")
     return tasks

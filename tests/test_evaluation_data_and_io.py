@@ -14,6 +14,31 @@ def write_jsonl(path, rows):
 
 
 class EvaluationDataTests(unittest.TestCase):
+    def _write_lmeb_leaf(self, root, leaf_name="easy", *, with_qrels=True):
+        task_root = root / "Dialogue" / "ConvoMem"
+        leaf = task_root / leaf_name
+        write_jsonl(task_root / "corpus.jsonl", [{"id": "d1", "text": "one"}])
+        write_jsonl(task_root / "candidates.jsonl", [{"scene_id": "s", "candidate_doc_ids": ["d1"]}])
+        write_jsonl(leaf / "queries.jsonl", [{"id": "q", "scene_id": "s", "text": "query"}])
+        if with_qrels:
+            (leaf / "qrels.tsv").write_text("q\td1\t1\n", encoding="utf-8")
+
+    def test_lmeb_requested_group_and_leaf_coverage_is_strict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_lmeb_leaf(root)
+            with self.assertRaisesRegex(FileNotFoundError, "LoCoMo"):
+                load_lmeb(root, ["ConvoMem", "LoCoMo"])
+            tasks = load_lmeb(root, ["Dialogue/ConvoMem/easy"])
+            self.assertEqual([task.name for task in tasks], ["Dialogue/ConvoMem/easy"])
+
+    def test_lmeb_requested_leaf_without_qrels_fails_loudly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_lmeb_leaf(root, with_qrels=False)
+            with self.assertRaisesRegex(FileNotFoundError, "qrels.tsv"):
+                load_lmeb(root, ["ConvoMem"])
+
     def test_beir_and_candidate_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
