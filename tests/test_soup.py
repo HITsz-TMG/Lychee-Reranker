@@ -122,6 +122,7 @@ class SoupTests(unittest.TestCase):
                 soup_models([first, second], [0.5, 0.5], root / "tokenizer-out")
 
             (second / "tokenizer.json").unlink()
+            (second / "tokenizer.py").write_text("# tokenizer implementation\n", encoding="utf-8")
             (second / "generation_config.json").write_text("{}", encoding="utf-8")
             with self.assertRaisesRegex(FileNotFoundError, "tokenizer payload"):
                 soup_models([first, second], [0.5, 0.5], root / "missing-payload-out")

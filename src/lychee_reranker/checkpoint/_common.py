@@ -71,6 +71,7 @@ TOKENIZER_PAYLOAD_EXACT_FILES = frozenset(
     }
 )
 TOKENIZER_PAYLOAD_PREFIXES = ("sentencepiece", "spiece.", "tokenizer.", "vocab.")
+TOKENIZER_CODE_SUFFIXES = (".py", ".pyc", ".pyo", ".pyi")
 
 # Safetensors dtype names and their storage width.  Unknown dtypes are
 # rejected instead of guessed so shard sizing and dtype parity remain exact.
@@ -164,7 +165,10 @@ def tokenizer_fingerprint(path: Path) -> dict[str, str]:
     metadata_files = relevant_metadata_files(path)
     if not any(
         candidate.name in TOKENIZER_PAYLOAD_EXACT_FILES
-        or any(candidate.name.startswith(prefix) for prefix in TOKENIZER_PAYLOAD_PREFIXES)
+        or (
+            not candidate.name.lower().endswith(TOKENIZER_CODE_SUFFIXES)
+            and any(candidate.name.startswith(prefix) for prefix in TOKENIZER_PAYLOAD_PREFIXES)
+        )
         for candidate in metadata_files
     ):
         raise FileNotFoundError(f"no tokenizer payload found in {path}")

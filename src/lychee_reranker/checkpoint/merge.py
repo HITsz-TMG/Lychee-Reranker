@@ -9,6 +9,7 @@ from typing import Any
 from ._common import (
     check_finite_state,
     copy_relevant_metadata,
+    CONFIG_VOLATILE_FIELDS,
     read_mapping,
     semantic_config,
     staged_output,
@@ -73,15 +74,21 @@ def _load_seq2seq_config(base_model: str | Path, common: dict[str, Any]):
     return config
 
 
-def _config_without_dtype(config: dict[str, Any]) -> dict[str, Any]:
-    comparable = dict(config)
-    # Loading with an explicit dtype is allowed to update this runtime hint in
-    # save_pretrained.  The tensor dtype itself is validated by the model save
-    # and reload parity test; it is intentionally excluded only from semantic
-    # config comparison.
-    comparable.pop("dtype", None)
-    comparable.pop("torch_dtype", None)
-    return comparable
+_RUNTIME_CONFIG_FIELDS = frozenset((*CONFIG_VOLATILE_FIELDS, "dtype", "torch_dtype"))
+
+
+def _config_without_runtime_fields(value: Any) -> Any:
+    """Remove only save/load metadata that is allowed to vary recursively."""
+
+    if isinstance(value, dict):
+        return {
+            key: _config_without_runtime_fields(item)
+            for key, item in value.items()
+            if key not in _RUNTIME_CONFIG_FIELDS
+        }
+    if isinstance(value, list):
+        return [_config_without_runtime_fields(item) for item in value]
+    return value
 
 
 def merge_lora(
@@ -154,11 +161,18 @@ def merge_lora(
         # Ensure the saved semantic config still describes the loaded base.
         # This catches an unexpected model implementation rewriting a config
         # during save before the destination can become visible.
-        saved_config = semantic_config(temporary)
-        if local_base is not None and _config_without_dtype(saved_config) != _config_without_dtype(
-            semantic_config(local_base)
-        ):
-            raise ValueError("merged output config differs from the loaded base model config")
+        semantic_config(temporary)
+        if local_base is not None:
+            # Transformers may materialize omitted defaults while loading a
+            # nested config (T5Gemma2 does this for dropout, token IDs, and
+            # tied embeddings). Compare canonical config objects so those
+            # representation changes do not look semantic, while retaining
+            # strict equality for every non-runtime field.
+            saved_loaded_config = _load_seq2seq_config(temporary, common)
+            comparable_saved = _config_without_runtime_fields(saved_loaded_config.to_dict())
+            comparable_base = _config_without_runtime_fields(config.to_dict())
+            if comparable_saved != comparable_base:
+                raise ValueError("merged output config differs from the loaded base model config")
 
         manifest = {
             "schema_version": 1,

@@ -13,8 +13,14 @@ try:
     from transformers import (
         AutoModelForSeq2SeqLM,
         PreTrainedTokenizerFast,
+        SiglipVisionConfig,
         T5Config,
         T5ForConditionalGeneration,
+        T5Gemma2Config,
+        T5Gemma2DecoderConfig,
+        T5Gemma2EncoderConfig,
+        T5Gemma2ForConditionalGeneration,
+        T5Gemma2TextConfig,
     )
 
     PEFT_AVAILABLE = True
@@ -75,6 +81,91 @@ class MergeTests(unittest.TestCase):
         peft_model.save_pretrained(adapter)
         return base, adapter
 
+    def _t5gemma2_base_and_adapter(self, root: Path) -> tuple[Path, Path]:
+        base = root / "t5gemma2-base"
+        base.mkdir()
+        torch.manual_seed(123)
+        text = dict(
+            vocab_size=32,
+            hidden_size=16,
+            intermediate_size=32,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=8,
+            layer_types=["full_attention"],
+            max_position_embeddings=256,
+            query_pre_attn_scalar=8,
+            pad_token_id=0,
+            eos_token_id=1,
+            bos_token_id=2,
+        )
+        config = T5Gemma2Config(
+            encoder=T5Gemma2EncoderConfig(
+                text_config=T5Gemma2TextConfig(**text),
+                vision_config=SiglipVisionConfig(
+                    hidden_size=16,
+                    intermediate_size=32,
+                    num_hidden_layers=1,
+                    num_attention_heads=2,
+                    image_size=28,
+                    patch_size=14,
+                ),
+                image_token_index=31,
+                mm_tokens_per_image=4,
+            ),
+            decoder=T5Gemma2DecoderConfig(**text),
+            vocab_size=32,
+            image_token_index=31,
+            pad_token_id=0,
+            eos_token_id=1,
+            bos_token_id=2,
+        )
+        T5Gemma2ForConditionalGeneration(config).save_pretrained(base)
+
+        tokenizer = Tokenizer(
+            models.WordLevel(
+                {
+                    "[PAD]": 0,
+                    "[EOS]": 1,
+                    "<bos>": 2,
+                    "[UNK]": 3,
+                    "yes": 4,
+                    "no": 5,
+                    "question": 6,
+                    "answer": 7,
+                    "unrelated": 8,
+                },
+                unk_token="[UNK]",
+            )
+        )
+        tokenizer.pre_tokenizer = pre_tokenizers.Whitespace()
+        PreTrainedTokenizerFast(
+            tokenizer_object=tokenizer,
+            pad_token="[PAD]",
+            eos_token="[EOS]",
+            bos_token="<bos>",
+            unk_token="[UNK]",
+        ).save_pretrained(base)
+
+        base_model = AutoModelForSeq2SeqLM.from_pretrained(base, dtype=torch.float32)
+        peft_model = get_peft_model(
+            base_model,
+            LoraConfig(
+                r=2,
+                lora_alpha=4,
+                target_modules=["q_proj", "v_proj"],
+                task_type=TaskType.SEQ_2_SEQ_LM,
+            ),
+        )
+        with torch.no_grad():
+            for name, parameter in peft_model.named_parameters():
+                if "lora_B" in name:
+                    parameter.fill_(0.05)
+        adapter = root / "t5gemma2-adapter"
+        peft_model.save_pretrained(adapter)
+        return base, adapter
+
     def test_tiny_t5_merge_reload_matches_peft(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -99,6 +190,26 @@ class MergeTests(unittest.TestCase):
             manifest = json.loads((output / "merge_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["operation"], "merge_lora")
             self.assertEqual(manifest["model_type"], "t5")
+
+    def test_tiny_t5gemma2_bfloat16_merge_reload_matches_peft(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base, adapter = self._t5gemma2_base_and_adapter(root)
+            output = merge_lora(str(base), str(adapter), root / "merged", dtype="bfloat16")
+
+            expected = AutoModelForSeq2SeqLM.from_pretrained(base, dtype=torch.bfloat16)
+            expected = PeftModel.from_pretrained(expected, adapter, is_trainable=False)
+            expected = expected.merge_and_unload(safe_merge=True)
+            actual = AutoModelForSeq2SeqLM.from_pretrained(output, dtype=torch.bfloat16)
+            self.assertEqual(set(expected.state_dict()), set(actual.state_dict()))
+            for key, tensor in expected.state_dict().items():
+                self.assertEqual(tensor.dtype, actual.state_dict()[key].dtype, key)
+                self.assertTrue(torch.equal(tensor, actual.state_dict()[key]), key)
+
+            saved_config = json.loads((output / "config.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved_config["dtype"], "bfloat16")
+            self.assertEqual(saved_config["decoder"]["dtype"], "bfloat16")
+            self.assertEqual(saved_config["encoder"]["dtype"], "bfloat16")
 
     def test_rejects_adapter_for_different_local_base_and_preserves_existing_output(self):
         with tempfile.TemporaryDirectory() as tmp:
