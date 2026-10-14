@@ -1,6 +1,11 @@
 import unittest
 
-from lychee_reranker.evaluation.metrics import evaluate_run, ndcg_at_k, ranked_document_ids
+from lychee_reranker.evaluation.metrics import (
+    evaluate_run,
+    map_at_k,
+    ndcg_at_k,
+    ranked_document_ids,
+)
 from lychee_reranker.prompts import DEFAULT_SYSTEM_INSTRUCTION, build_decoder_prompt, build_document
 
 
@@ -19,11 +24,44 @@ class PromptAndMetricTests(unittest.TestCase):
     def test_metrics_and_tie_breaking(self):
         qrels = {"q": {"d1": 1.0, "d2": 1.0, "d3": 0.0}}
         run = {"q": {"d2": 0.5, "d1": 0.5, "d3": 0.1}}
-        self.assertEqual(ranked_document_ids(run["q"]), ["d1", "d2", "d3"])
+        self.assertEqual(ranked_document_ids(run["q"]), ["d2", "d1", "d3"])
         values = evaluate_run(qrels, run, ("ndcg@10", "recall@1", "mrr@10"))
         self.assertAlmostEqual(values["ndcg@10"], 1.0)
         self.assertAlmostEqual(values["recall@1"], 0.5)
         self.assertAlmostEqual(values["mrr@10"], 1.0)
+
+    def test_map_uses_all_positive_qrels_in_the_denominator(self):
+        qrels = {"q": {"d1": 2.0, "d2": 1.0, "d3": 0.0}}
+        ranked = ["d1", "noise", "d2"]
+        self.assertAlmostEqual(map_at_k(qrels["q"], ranked, 1), 0.5)
+        self.assertAlmostEqual(map_at_k(qrels["q"], ranked, 2), 0.5)
+        self.assertAlmostEqual(map_at_k(qrels["q"], ranked, 3), (1.0 + 2.0 / 3.0) / 2.0)
+        self.assertEqual(evaluate_run(qrels, {"q": {"d1": 0.9, "noise": 0.8, "d2": 0.7}}, ("map@3",)), {"map@3": (1.0 + 2.0 / 3.0) / 2.0})
+
+    def test_tied_metrics_match_pytrec_eval_document_id_order(self):
+        try:
+            import pytrec_eval
+        except ImportError:
+            self.skipTest("pytrec_eval is optional")
+        qrels = {"q": {"d1": 2, "d2": 1, "d3": 0}}
+        run = {"q": {"d1": 0.5, "d2": 0.5, "noise": 0.1}}
+        metrics = ("ndcg@1", "ndcg@2", "map@1", "map@2", "recall@1", "recall@2")
+        actual = evaluate_run(qrels, run, metrics)
+        reference = pytrec_eval.RelevanceEvaluator(
+            qrels,
+            {"ndcg_cut.1", "ndcg_cut.2", "map_cut.1", "map_cut.2", "recall.1", "recall.2"},
+        ).evaluate(run)["q"]
+        self.assertAlmostEqual(actual["ndcg@1"], reference["ndcg_cut_1"])
+        self.assertAlmostEqual(actual["ndcg@2"], reference["ndcg_cut_2"])
+        self.assertAlmostEqual(actual["map@1"], reference["map_cut_1"])
+        self.assertAlmostEqual(actual["map@2"], reference["map_cut_2"])
+        self.assertAlmostEqual(actual["recall@1"], reference["recall_1"])
+        self.assertAlmostEqual(actual["recall@2"], reference["recall_2"])
+
+    def test_mrr_keeps_flagembedding_stable_insertion_ties(self):
+        qrels = {"q": {"d1": 1, "d2": 0}}
+        run = {"q": {"d2": 0.5, "d1": 0.5}}
+        self.assertAlmostEqual(evaluate_run(qrels, run, ("mrr@2",))["mrr@2"], 0.5)
 
     def test_missing_run_counts_as_zero(self):
         values = evaluate_run({"a": {"d": 1}, "b": {"x": 1}}, {"a": {"d": 2}}, ("recall@1",))

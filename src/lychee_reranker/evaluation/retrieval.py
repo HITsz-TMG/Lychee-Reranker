@@ -89,6 +89,15 @@ def dense_search_restricted(
         raise ValueError("candidate/query coverage mismatch")
     query_array = np.asarray(query_embeddings, dtype=np.float32)
     document_array = np.asarray(document_embeddings, dtype=np.float32)
+    if query_array.ndim != 2 or document_array.ndim != 2:
+        raise ValueError("embeddings must be two-dimensional")
+    if query_array.shape[1] != document_array.shape[1]:
+        raise ValueError("query/document embedding dimensions differ")
+    if (
+        len(query_ids) != query_array.shape[0]
+        or len(document_ids) != document_array.shape[0]
+    ):
+        raise ValueError("embedding counts do not match IDs")
     if not np.isfinite(query_array).all() or not np.isfinite(document_array).all():
         raise ValueError("embeddings must contain only finite values")
     document_index = {doc_id: index for index, doc_id in enumerate(document_ids)}
@@ -103,19 +112,27 @@ def dense_search_restricted(
         missing = [doc_id for doc_id in candidate_ids if doc_id not in document_index]
         if missing:
             raise ValueError(f"{query_id}: candidate pool references unknown docs {missing[:3]}")
-        indices = [document_index[doc_id] for doc_id in candidate_ids]
+        candidate_pairs = [
+            (doc_id, document_index[doc_id])
+            for doc_id in candidate_ids
+            if not (ignore_identical_ids and doc_id == query_id)
+        ]
+        if not candidate_pairs:
+            result[query_id] = {}
+            continue
+        indices = [index for _, index in candidate_pairs]
         scores = document_array[indices] @ query_array[row]
         if not np.isfinite(scores).all():
             raise ValueError(f"{query_id}: retrieval produced a non-finite score")
-        pairs = sorted(
-            (
-                (document_id, score)
-                for document_id, score in zip(candidate_ids, scores.tolist())
-                if not (ignore_identical_ids and document_id == query_id)
-            ),
-            key=lambda item: (-item[1], item[0]),
-        )
-        result[query_id] = dict(pairs[:top_k])
+        # FlagEmbedding's LMEB helper uses NumPy's default argsort on this
+        # exact candidate-score vector.  Preserve its quicksort tie order;
+        # a lexical or stable secondary key can change top-k membership.
+        order = np.argsort(-scores)
+        pairs = [
+            (candidate_pairs[index][0], float(scores[index]))
+            for index in order[:top_k]
+        ]
+        result[query_id] = dict(pairs)
     return result
 
 
@@ -153,6 +170,11 @@ def rerank(
     result = {}
     for query_id, query in task.queries.items():
         candidate_scores = candidates[query_id]
+        unknown = sorted(set(candidate_scores) - set(task.corpus))
+        if unknown:
+            raise ValueError(
+                f"{task.name}/{query_id}: candidates reference unknown docs {unknown[:3]}"
+            )
         if any(not math.isfinite(float(score)) for score in candidate_scores.values()):
             raise ValueError(f"{task.name}/{query_id}: candidate scores must be finite")
         if task.candidates is not None:
@@ -165,15 +187,10 @@ def rerank(
                 )
         ranked_ids = [
             doc_id
-            for doc_id, _ in sorted(candidate_scores.items(), key=lambda item: (-item[1], item[0]))
+            for doc_id, _ in sorted(candidate_scores.items(), key=lambda item: item[1], reverse=True)
         ][:top_k]
         if ignore_identical_ids:
             ranked_ids = [doc_id for doc_id in ranked_ids if doc_id != query_id]
-        missing = [doc_id for doc_id in ranked_ids if doc_id not in task.corpus]
-        if missing:
-            raise ValueError(
-                f"{task.name}/{query_id}: candidates reference unknown docs {missing[:3]}"
-            )
         scores = reranker.predict(
             [(query, task.corpus[doc_id]) for doc_id in ranked_ids], instruction=instruction
         )
@@ -184,6 +201,8 @@ def rerank(
             )
         if any(not math.isfinite(float(score)) for score in scores):
             raise ValueError(f"{task.name}/{query_id}: reranker returned non-finite scores")
-        pairs = sorted(zip(ranked_ids, scores), key=lambda item: (-item[1], item[0]))
+        # EvalReranker builds its output mapping in sentence-pair order.  Keep
+        # that stable order when reranker scores tie for custom MRR parity.
+        pairs = sorted(zip(ranked_ids, scores), key=lambda item: item[1], reverse=True)
         result[query_id] = dict(pairs)
     return result

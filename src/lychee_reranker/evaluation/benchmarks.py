@@ -63,6 +63,14 @@ MIRACL_LANGUAGES = (
     "zh",
 )
 
+# FlagEmbedding's MIRACL loader exposes dev only for the two languages whose
+# released data has no train split.  Keep this map close to the benchmark
+# registry so the CLI and direct loader enforce the same split contract.
+MIRACL_SPLITS = {
+    language: ("dev",) if language in {"de", "yo"} else ("train", "dev")
+    for language in MIRACL_LANGUAGES
+}
+
 LMEB_DIALOGUE_TASKS = ("ConvoMem", "LoCoMo", "LongMemEval", "MemBench", "REALTALK", "TMD")
 
 DEFAULT_METRICS = {

@@ -88,7 +88,11 @@ class DenseEmbedder:
 
     @staticmethod
     def _pool(hidden: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-        mask = attention_mask.unsqueeze(-1).to(hidden.dtype)
+        # FlagEmbedding's encoder-only BaseEmbedder multiplies by
+        # ``attention_mask.unsqueeze(-1).float()``.  Keeping the mask in
+        # float32 makes BF16/FP16 pooling accumulate in float32 before the
+        # final normalization, which is material for the native KaLM route.
+        mask = attention_mask.unsqueeze(-1).float()
         pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
         return F.normalize(pooled.float(), p=2, dim=-1)
 
@@ -98,13 +102,37 @@ class DenseEmbedder:
             raise TypeError("texts must be a sequence of strings")
         if any(not isinstance(text, str) for text in texts):
             raise TypeError("texts must be a sequence of strings")
-        batches: List[np.ndarray] = []
+        if not texts:
+            hidden_size = int(getattr(self.model.config, "hidden_size", 0))
+            return np.empty((0, hidden_size), dtype=np.float32)
+
+        # FlagEmbedding tokenizes without padding, globally sorts by encoded
+        # length, pads each sorted batch, and restores the caller's order.
+        # Padding batches in input order changes low-precision reductions when
+        # otherwise identical inputs are split across different max lengths.
+        all_inputs = []
         for start in range(0, len(texts), self.batch_size):
+            text_batch = list(texts[start : start + self.batch_size])
             encoded = self.tokenizer(
-                list(texts[start : start + self.batch_size]),
-                padding=True,
+                text_batch,
+                padding=False,
                 truncation=True,
                 max_length=self.max_length,
+            )
+            all_inputs.extend(
+                [
+                    {key: values[index] for key, values in encoded.items()}
+                    for index in range(len(text_batch))
+                ]
+            )
+        length_sorted_idx = np.argsort([-len(value["input_ids"]) for value in all_inputs])
+        all_inputs_sorted = [all_inputs[index] for index in length_sorted_idx]
+
+        batches: List[np.ndarray] = []
+        for start in range(0, len(all_inputs_sorted), self.batch_size):
+            encoded = self.tokenizer.pad(
+                all_inputs_sorted[start : start + self.batch_size],
+                padding=True,
                 return_tensors="pt",
             ).to(self.device)
             model_inputs = dict(encoded)
@@ -118,10 +146,8 @@ class DenseEmbedder:
             if not torch.isfinite(pooled).all():
                 raise RuntimeError("embedder produced non-finite embeddings")
             batches.append(pooled.cpu().numpy())
-        if not batches:
-            hidden_size = int(getattr(self.model.config, "hidden_size", 0))
-            return np.empty((0, hidden_size), dtype=np.float32)
-        return np.concatenate(batches, axis=0)
+        embeddings = np.concatenate(batches, axis=0)
+        return embeddings[np.argsort(length_sorted_idx)]
 
     def encode_queries(
         self, queries: Sequence[str], instruction: Optional[str] = None

@@ -21,6 +21,21 @@ class RetrievalTests(unittest.TestCase):
         )
         self.assertEqual(list(result["q"]), ["b"])
 
+    def test_restricted_search_keeps_source_candidate_order_on_ties(self):
+        queries = np.array([[1.0, 0.0]], dtype=np.float32)
+        documents = np.array(
+            [[1.0, 0.0], [1.0, 0.0], [1.0, 0.0]], dtype=np.float32
+        )
+        result = dense_search_restricted(
+            queries,
+            documents,
+            ["q"],
+            ["a", "b", "c"],
+            {"q": ["c", "b", "a"]},
+            top_k=1,
+        )
+        self.assertEqual(list(result["q"]), ["c"])
+
     def test_numpy_fallback_is_available_without_faiss(self):
         queries = np.array([[1.0, 0.0]], dtype=np.float32)
         documents = np.array([[1.0, 0.0], [0.5, 0.0]], dtype=np.float32)
@@ -63,11 +78,68 @@ class RetrievalTests(unittest.TestCase):
         )
         self.assertEqual(result, {"q": {"d": 1.0}})
 
+    def test_rerank_keeps_source_input_order_on_tied_scores(self):
+        class FakeReranker:
+            def predict(self, pairs, instruction=None):
+                return [1.0] * len(pairs)
+
+        task = type(
+            "Task",
+            (),
+            {
+                "name": "fiqa",
+                "queries": {"q": "query"},
+                "corpus": {"a": "A", "b": "B"},
+                "candidates": None,
+            },
+        )()
+        result = rerank(
+            task,
+            {"q": {"b": 0.5, "a": 0.5}},
+            FakeReranker(),
+            top_k=2,
+        )
+        self.assertEqual(list(result["q"]), ["b", "a"])
+
     def test_restricted_search_requires_every_query(self):
         queries = np.array([[1.0, 0.0]], dtype=np.float32)
         documents = np.array([[1.0, 0.0]], dtype=np.float32)
         with self.assertRaisesRegex(ValueError, "coverage"):
             dense_search_restricted(queries, documents, ["q"], ["a"], {}, top_k=1)
+
+    def test_restricted_search_validates_embedding_shape_and_counts(self):
+        with self.assertRaisesRegex(ValueError, "two-dimensional"):
+            dense_search_restricted(
+                np.array([1.0, 0.0], dtype=np.float32),
+                np.array([[1.0, 0.0]], dtype=np.float32),
+                ["q"],
+                ["d"],
+                {"q": ["d"]},
+                top_k=1,
+            )
+        with self.assertRaisesRegex(ValueError, "embedding counts"):
+            dense_search_restricted(
+                np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+                np.array([[1.0, 0.0]], dtype=np.float32),
+                ["q"],
+                ["d"],
+                {"q": ["d"]},
+                top_k=1,
+            )
+
+    def test_rerank_rejects_unknown_documents_before_truncation(self):
+        task = type(
+            "Task",
+            (),
+            {
+                "name": "fiqa",
+                "queries": {"q": "query"},
+                "corpus": {"d": "document"},
+                "candidates": None,
+            },
+        )()
+        with self.assertRaisesRegex(ValueError, "unknown docs"):
+            rerank(task, {"q": {"d": 1.0, "missing": 0.0}}, object(), top_k=1)
 
 
 if __name__ == "__main__":

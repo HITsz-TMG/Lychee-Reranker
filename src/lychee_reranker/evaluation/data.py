@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence
 
+from .benchmarks import MIRACL_SPLITS
+
 
 @dataclass
 class EvaluationTask:
@@ -181,29 +183,42 @@ def load_beir(root: str | Path, dataset: str, split: str = "test") -> List[Evalu
     if not base.is_dir():
         raise FileNotFoundError(f"BEIR dataset directory not found: {base}")
     leaves = [base]
-    if not (base / "corpus.jsonl").is_file():
+    if dataset.casefold() == "cqadupstack":
+        # FlagEmbedding treats CQADupStack as a fixed collection of twelve
+        # child datasets even if an accidental root-level corpus is present.
         leaves = sorted(path.parent for path in base.rglob("corpus.jsonl"))
-        if dataset.casefold() == "cqadupstack":
-            expected = {
-                "android",
-                "english",
-                "gaming",
-                "gis",
-                "mathematica",
-                "physics",
-                "programmers",
-                "stats",
-                "tex",
-                "unix",
-                "webmasters",
-                "wordpress",
-            }
-            available = {path.relative_to(base).parts[0] for path in leaves}
-            if available != expected:
-                raise ValueError(
-                    f"{dataset}: expected 12 child datasets; "
-                    f"missing={sorted(expected - available)}, extra={sorted(available - expected)}"
-                )
+        expected = {
+            "android",
+            "english",
+            "gaming",
+            "gis",
+            "mathematica",
+            "physics",
+            "programmers",
+            "stats",
+            "tex",
+            "unix",
+            "webmasters",
+            "wordpress",
+        }
+        child_leaves = [path for path in leaves if path != base]
+        nested_leaves = [
+            path for path in child_leaves if len(path.relative_to(base).parts) != 1
+        ]
+        available = {
+            path.relative_to(base).parts[0]
+            for path in child_leaves
+            if path.relative_to(base).parts
+        }
+        if available != expected or nested_leaves:
+            raise ValueError(
+                f"{dataset}: expected 12 child datasets; "
+                f"missing={sorted(expected - available)}, extra={sorted(available - expected)}, "
+                f"nested={len(nested_leaves)}"
+            )
+        leaves = child_leaves
+    elif not (base / "corpus.jsonl").is_file():
+        leaves = sorted(path.parent for path in base.rglob("corpus.jsonl"))
     tasks = []
     for leaf in leaves:
         suffix = "" if leaf == base else f"/{leaf.relative_to(base).as_posix()}"
@@ -240,6 +255,12 @@ def load_beir(root: str | Path, dataset: str, split: str = "test") -> List[Evalu
 
 
 def load_miracl(root: str | Path, language: str, split: str = "dev") -> EvaluationTask:
+    allowed_splits = MIRACL_SPLITS.get(language)
+    if allowed_splits is not None and split not in allowed_splits:
+        raise ValueError(
+            f"MIRACL language {language!r} does not provide split {split!r}; "
+            f"available splits: {list(allowed_splits)}"
+        )
     base = Path(root) / language
     if not base.is_dir():
         raise FileNotFoundError(f"MIRACL language directory not found: {base}")

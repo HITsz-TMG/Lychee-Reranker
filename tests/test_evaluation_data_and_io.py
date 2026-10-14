@@ -86,6 +86,43 @@ class EvaluationDataTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "expected 12 child"):
                 load_beir(Path(tmp), "cqadupstack")
 
+    def test_cqadupstack_root_corpus_does_not_bypass_child_validation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "cqadupstack"
+            write_jsonl(root / "corpus.jsonl", [{"_id": "d", "text": "doc"}])
+            write_jsonl(root / "test_queries.jsonl", [{"_id": "q", "text": "query"}])
+            write_jsonl(
+                root / "test_qrels.jsonl", [{"query-id": "q", "corpus-id": "d", "score": 1}]
+            )
+            with self.assertRaisesRegex(ValueError, "expected 12 child"):
+                load_beir(Path(tmp), "cqadupstack")
+
+    def test_cqadupstack_rejects_nested_duplicate_corpus_leaves(self):
+        children = (
+            "android",
+            "english",
+            "gaming",
+            "gis",
+            "mathematica",
+            "physics",
+            "programmers",
+            "stats",
+            "tex",
+            "unix",
+            "webmasters",
+            "wordpress",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "cqadupstack"
+            for child in children:
+                write_jsonl(base / child / "corpus.jsonl", [{"_id": "d", "text": "doc"}])
+            write_jsonl(
+                base / "android" / "nested" / "corpus.jsonl",
+                [{"_id": "d", "text": "doc"}],
+            )
+            with self.assertRaisesRegex(ValueError, "nested=1"):
+                load_beir(Path(tmp), "cqadupstack")
+
     def test_miracl(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp) / "en"
@@ -94,6 +131,11 @@ class EvaluationDataTests(unittest.TestCase):
             write_jsonl(base / "dev_qrels.jsonl", [{"qid": "q", "docid": "d", "relevance": 1}])
             task = load_miracl(Path(tmp), "en")
             self.assertEqual(task.qrels, {"q": {"d": 1.0}})
+
+    def test_miracl_rejects_unavailable_language_split(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, r"available splits: \['dev'\]"):
+                load_miracl(Path(tmp), "de", "train")
 
     def test_lmeb_filters_qrels_to_candidate_pool(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -114,6 +156,34 @@ class EvaluationDataTests(unittest.TestCase):
             self.assertEqual(len(tasks), 1)
             self.assertEqual(tasks[0].qrels, {"q": {"d1": 1.0}})
             self.assertEqual(tasks[0].candidates, {"q": ["d1"]})
+
+    def test_lmeb_drops_queries_without_a_candidate_positive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_root = root / "Dialogue" / "ConvoMem"
+            leaf = task_root / "easy"
+            write_jsonl(
+                task_root / "corpus.jsonl",
+                [{"id": "d1", "text": "one"}, {"id": "d2", "text": "two"}],
+            )
+            write_jsonl(
+                task_root / "candidates.jsonl",
+                [{"scene_id": "s", "candidate_doc_ids": ["d1"]}],
+            )
+            write_jsonl(
+                leaf / "queries.jsonl",
+                [
+                    {"id": "q-empty", "scene_id": "s", "text": "zero"},
+                    {"id": "q-outside", "scene_id": "s", "text": "outside"},
+                ],
+            )
+            (leaf / "qrels.tsv").write_text(
+                "q-empty\td1\t0\nq-outside\td2\t1\n", encoding="utf-8"
+            )
+            tasks = load_lmeb(root, ["ConvoMem"])
+            self.assertEqual(tasks[0].queries, {})
+            self.assertEqual(tasks[0].qrels, {})
+            self.assertEqual(tasks[0].candidates, {})
 
     def test_lmeb_resolves_standard_scene_query_and_instruction(self):
         with tempfile.TemporaryDirectory() as tmp:

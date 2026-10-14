@@ -5,11 +5,33 @@ from typing import Dict, Mapping, Sequence, Tuple
 
 
 def ranked_document_ids(scores: Mapping[str, float]) -> list[str]:
+    """Return a run ranking with pytrec_eval's score-tie contract.
+
+    The original FlagEmbedding evaluator passes score mappings directly to
+    ``pytrec_eval``.  Its C++ evaluator orders equal scores by descending
+    document ID, independently of mapping insertion order.  Grouping equal
+    floating-point scores before sorting keeps that behavior explicit and
+    avoids using a secondary ascending key that changes graded metrics.
+    """
+    buckets: Dict[float, list[str]] = {}
+    for doc_id, score in scores.items():
+        if not isinstance(doc_id, str) or not math.isfinite(float(score)):
+            raise ValueError("run document IDs must be strings with finite scores")
+        buckets.setdefault(float(score), []).append(doc_id)
+    return [
+        doc_id
+        for score in sorted(buckets, reverse=True)
+        for doc_id in sorted(buckets[score], reverse=True)
+    ]
+
+
+def _stable_ranked_document_ids(scores: Mapping[str, float]) -> list[str]:
+    """Return the score-only stable ranking used by FlagEmbedding's MRR helper."""
     for doc_id, score in scores.items():
         if not isinstance(doc_id, str) or not math.isfinite(float(score)):
             raise ValueError("run document IDs must be strings with finite scores")
     return [
-        doc_id for doc_id, _ in sorted(scores.items(), key=lambda item: (-float(item[1]), item[0]))
+        doc_id for doc_id, _ in sorted(scores.items(), key=lambda item: float(item[1]), reverse=True)
     ]
 
 
@@ -37,6 +59,22 @@ def recall_at_k(qrels: Mapping[str, float], ranked: Sequence[str], k: int) -> fl
     return len(relevant.intersection(ranked[:k])) / len(relevant)
 
 
+def map_at_k(qrels: Mapping[str, float], ranked: Sequence[str], k: int) -> float:
+    """Compute AP at ``k`` using the original evaluator's positive-qrel denominator."""
+    if k <= 0:
+        raise ValueError("k must be positive")
+    relevant = {doc_id for doc_id, score in qrels.items() if score > 0}
+    if not relevant:
+        return 0.0
+    hits = 0
+    precision_sum = 0.0
+    for rank, doc_id in enumerate(ranked[:k], start=1):
+        if doc_id in relevant:
+            hits += 1
+            precision_sum += hits / rank
+    return precision_sum / len(relevant)
+
+
 def mrr_at_k(qrels: Mapping[str, float], ranked: Sequence[str], k: int) -> float:
     if k <= 0:
         raise ValueError("k must be positive")
@@ -52,7 +90,7 @@ def _parse_metric(name: str) -> Tuple[str, int]:
         k = int(raw_k)
     except (ValueError, AttributeError) as error:
         raise ValueError(f"invalid metric {name!r}; expected e.g. ndcg@10") from error
-    if kind not in {"ndcg", "recall", "mrr"} or k <= 0:
+    if kind not in {"ndcg", "map", "recall", "mrr"} or k <= 0:
         raise ValueError(f"unsupported metric: {name}")
     return kind, k
 
@@ -79,9 +117,15 @@ def evaluate_run(
         kind, k = _parse_metric(metric)
         values = []
         for query_id, relevance in qrels.items():
-            ranked = ranked_document_ids(run.get(query_id, {}))
+            ranked = (
+                _stable_ranked_document_ids(run.get(query_id, {}))
+                if kind == "mrr"
+                else ranked_document_ids(run.get(query_id, {}))
+            )
             if kind == "ndcg":
                 values.append(ndcg_at_k(relevance, ranked, k))
+            elif kind == "map":
+                values.append(map_at_k(relevance, ranked, k))
             elif kind == "recall":
                 values.append(recall_at_k(relevance, ranked, k))
             else:
