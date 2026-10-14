@@ -99,9 +99,7 @@ def sft_loss(
         num_query_groups=num_query_groups,
     )
     logits = yes_no_logits.float()
-    labels = torch.zeros(
-        yes_no_logits.shape[0], dtype=logits.dtype, device=yes_no_logits.device
-    )
+    labels = torch.zeros(yes_no_logits.shape[0], dtype=logits.dtype, device=yes_no_logits.device)
     labels[::group_size] = 1.0
     student_margin = logits[:, 1] - logits[:, 0]
     return F.binary_cross_entropy_with_logits(student_margin, labels)
@@ -123,9 +121,10 @@ def kd_loss(
     # Appendix D Eq. (10) is the literal soft-label BCE.  Do not subtract the
     # teacher entropy: that produces the KL-equivalent scalar and changes the
     # reported training objective even though its student gradient matches.
-    return F.binary_cross_entropy_with_logits(
-        student / temperature, teacher_probability
-    ) * temperature**2
+    return (
+        F.binary_cross_entropy_with_logits(student / temperature, teacher_probability)
+        * temperature**2
+    )
 
 
 class LycheeRerankerTrainingModel(nn.Module):
@@ -237,7 +236,11 @@ class LycheeRerankerTrainingModel(nn.Module):
                 else:
                     groups = None
                     if num_query_groups is not None:
-                        groups = int(num_query_groups.item()) if torch.is_tensor(num_query_groups) else int(num_query_groups)
+                        groups = (
+                            int(num_query_groups.item())
+                            if torch.is_tensor(num_query_groups)
+                            else int(num_query_groups)
+                        )
                     losses.append(
                         sft_loss(
                             logits,

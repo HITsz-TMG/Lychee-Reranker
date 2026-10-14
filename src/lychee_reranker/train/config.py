@@ -65,9 +65,7 @@ def _finite_number(value: Any, name: str, *, minimum: float | None = None) -> No
         raise ValueError(f"{name} must be at least {minimum}")
 
 
-def validate_training_config(
-    config: Mapping[str, Any], *, check_data_paths: bool = False
-) -> None:
+def validate_training_config(config: Mapping[str, Any], *, check_data_paths: bool = False) -> None:
     """Validate the supported training contract before model loading.
 
     The release recipes deliberately expose only native Trainer/DDP. FSDP and
@@ -115,8 +113,10 @@ def validate_training_config(
         raise ValueError("model.lora.dropout must be less than 1")
 
     train_data = data.get("train_data")
-    if not isinstance(train_data, (list, tuple)) or not train_data or any(
-        not isinstance(path, str) or not path.strip() for path in train_data
+    if (
+        not isinstance(train_data, (list, tuple))
+        or not train_data
+        or any(not isinstance(path, str) or not path.strip() for path in train_data)
     ):
         raise ValueError("data.train_data must be a non-empty list of paths")
     if check_data_paths:

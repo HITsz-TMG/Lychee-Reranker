@@ -14,6 +14,7 @@ import importlib.util
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -270,6 +271,34 @@ def parity_checks(reference_file: Path, model_path: Path) -> dict:
     }
 
 
+def embedder_parity(model_path: Path, reference_vectors: Path) -> dict:
+    """Compare FP32 vectors with an independently captured implementation.
+
+    The NPY file has a sibling JSON containing a ``texts`` list. This input is
+    optional and external; CI and the default smoke never download it.
+    """
+    from lychee_reranker.evaluation.embedder import DenseEmbedder
+
+    metadata = json.loads(reference_vectors.with_suffix(".json").read_text())
+    expected = np.load(reference_vectors, allow_pickle=False)
+    model = DenseEmbedder(str(model_path), device="cuda", dtype="float32", batch_size=4)
+    actual = model.encode(metadata["texts"])
+    if actual.shape != expected.shape or not np.isfinite(expected).all():
+        raise AssertionError("invalid reference embedding dimensions or values")
+    diff = float(np.max(np.abs(actual - expected)))
+    if diff > 1e-5:
+        raise AssertionError(f"FP32 reference embedding parity failed: {diff}")
+    del model
+    release_gpu()
+    return {
+        "texts": len(actual),
+        "dimensions": actual.shape[1],
+        "max_abs_diff": diff,
+        "tolerance": 1e-5,
+        "reference_sha256": sha256(reference_vectors),
+    }
+
+
 def eval_fixtures(work: Path) -> dict[str, list[str]]:
     corpus = [{"_id": f"d{i}", "title": "", "text": p[1]} for i, p in enumerate(PAIRS)]
     queries = [{"_id": "q0", "text": PAIRS[0][0]}, {"_id": "q1", "text": PAIRS[2][0]}]
@@ -353,6 +382,7 @@ def main() -> None:
     parser.add_argument("--work-dir", type=Path, required=True, help="new output directory")
     parser.add_argument("--reference-implementation", type=Path)
     parser.add_argument("--reference-model", type=Path)
+    parser.add_argument("--embedder-reference-vectors", type=Path)
     args = parser.parse_args()
     for path in (args.base_model, args.embedder_model):
         if not path.is_dir():
@@ -373,6 +403,10 @@ def main() -> None:
     report = {
         "scope": "synthetic execution smoke; not benchmark quality or full training",
         "release_source_sha256": release_digest(),
+        "base_model_label": args.base_model.name,
+        "base_config_sha256": sha256(args.base_model / "config.json"),
+        "embedder_model_label": args.embedder_model.name,
+        "embedder_config_sha256": sha256(args.embedder_model / "config.json"),
         "gpu": torch.cuda.get_device_name(0),
         "versions": {
             p: importlib.metadata.version(p)
@@ -398,13 +432,25 @@ def main() -> None:
     jsonl(data, rows)
     sft_cfg = train_config(work, "sft", args.base_model.resolve(), data, 96, False)
     report["sft"] = train(work, "sft", sft_cfg)
-    before_resume = sha256(work / "sft" / "adapter_model.safetensors")
+    uninterrupted = work / "sft-uninterrupted.safetensors"
+    shutil.copyfile(work / "sft" / "adapter_model.safetensors", uninterrupted)
+    before_resume = sha256(uninterrupted)
     train(work, "sft", sft_cfg, work / "sft" / "checkpoint-1")
     report["sft"]["resume_exact_adapter_sha256_match"] = before_resume == sha256(
         work / "sft" / "adapter_model.safetensors"
     )
     if not report["sft"]["resume_exact_adapter_sha256_match"]:
-        raise AssertionError("resumed adapter differs from uninterrupted training")
+        with (
+            safe_open(uninterrupted, framework="pt") as left,
+            safe_open(work / "sft" / "adapter_model.safetensors", framework="pt") as right,
+        ):
+            difference = max(
+                (left.get_tensor(k).float() - right.get_tensor(k).float()).abs().max().item()
+                for k in left.keys()
+            )
+        raise AssertionError(
+            f"resumed adapter differs from uninterrupted training (max_abs_diff={difference})"
+        )
     sft = merge(work, "sft", args.base_model.resolve())
     report["sft"]["merge_parity"] = merge_parity(args.base_model.resolve(), work / "sft", sft)
     merged = []
@@ -437,6 +483,10 @@ def main() -> None:
     if args.reference_implementation:
         report["reference_parity"] = parity_checks(
             args.reference_implementation, args.reference_model or args.base_model
+        )
+    if args.embedder_reference_vectors:
+        report["embedder_reference_parity"] = embedder_parity(
+            args.embedder_model, args.embedder_reference_vectors
         )
     report["elapsed_seconds"] = round(time.monotonic() - started, 2)
     report["passed"] = True

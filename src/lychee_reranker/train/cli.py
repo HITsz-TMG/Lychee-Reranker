@@ -180,6 +180,7 @@ def build_components(
         query_max_length=query_max_length,
         passage_max_length=passage_max_length,
         knowledge_distillation=knowledge_distillation,
+        seed=int(training_cfg.get("data_seed", training_cfg["seed"])),
     )
     wrapper = LycheeRerankerTrainingModel(
         model,

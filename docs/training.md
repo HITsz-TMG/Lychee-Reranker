@@ -40,6 +40,11 @@ corpus nor replaces missing teacher scores with hard labels. The one-negative
 README record illustrates the schema only; use the prepared negative pools
 for paper training.
 
+Positive/negative sampling is determined by the data seed, epoch and record
+index. This preserves repeated records while making sampling independent of
+batch prefetch and checkpoint-resume order. Epoch updates use a Trainer callback
+as well as the dataset's `set_epoch` interface.
+
 ## Launch and effective batch
 
 `global_query_groups = world_size * per_device_train_batch_size * gradient_accumulation_steps`.

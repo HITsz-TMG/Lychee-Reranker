@@ -268,9 +268,7 @@ class LycheeReranker:
         if not isinstance(effective_batch, int) or effective_batch <= 0:
             raise ValueError("batch_size must be a positive integer")
 
-        sorted_indices = np.argsort(
-            [-(len(q) + len(d)) for q, d in validated], kind="stable"
-        )
+        sorted_indices = np.argsort([-(len(q) + len(d)) for q, d in validated], kind="stable")
         sorted_pairs = [validated[index] for index in sorted_indices]
         tested_batch = effective_batch
         first_scores: Optional[List[float]] = None

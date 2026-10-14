@@ -1,5 +1,6 @@
 import json
 import math
+import random
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,7 @@ import torch
 
 from lychee_reranker.train.data import (
     LycheeTrainCollator,
+    LycheeTrainDataset,
     discover_data_files,
     load_hf_dataset,
     validate_dataset_records,
@@ -26,6 +28,47 @@ VALID = {
 
 
 class DataContractTests(unittest.TestCase):
+    def test_sampling_is_independent_of_global_rng_and_access_order(self):
+        class Tokenizer:
+            def __call__(self, text, **kwargs):
+                ids = list(text.encode())
+                return {"input_ids": ids, "attention_mask": [1] * len(ids)}
+
+            def decode(self, ids, **kwargs):
+                return bytes(ids).decode()
+
+        record = {
+            **VALID,
+            "pos": [f"positive {i}" for i in range(5)],
+            "neg": [f"negative {i}" for i in range(30)],
+            "pos_scores": list(range(5)),
+            "neg_scores": list(range(30)),
+        }
+        dataset = LycheeTrainDataset(
+            [record] * 4, Tokenizer(), train_group_size=4, knowledge_distillation=True, seed=123
+        )
+        initial = [dataset[i] for i in range(4)]
+        random.seed(999)
+        for i in reversed(range(4)):
+            self.assertEqual(dataset[i], initial[i])
+        self.assertNotEqual(initial[0], initial[1])
+        dataset.set_epoch(1)
+        self.assertNotEqual([dataset[i] for i in range(4)], initial)
+        dataset.set_epoch(0)
+        self.assertEqual([dataset[i] for i in range(4)], initial)
+
+    def test_epoch_callback_handles_fractional_resume_epoch(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+
+        from lychee_reranker.train.trainer import DatasetEpochCallback
+
+        dataset = Mock()
+        callback = DatasetEpochCallback(dataset)
+        for epoch, expected in ((None, 0), (0.5, 0), (1.0, 1), (2.25, 2)):
+            callback.on_epoch_begin(None, SimpleNamespace(epoch=epoch), None)
+            dataset.set_epoch.assert_called_with(expected)
+
     def test_dataset_rows_are_validated_before_training(self):
         self.assertEqual(validate_dataset_records([VALID], knowledge_distillation=True), 1)
         with self.assertRaisesRegex(ValueError, "missing fields"):

@@ -18,7 +18,9 @@ class EvaluationDataTests(unittest.TestCase):
         task_root = root / "Dialogue" / "ConvoMem"
         leaf = task_root / leaf_name
         write_jsonl(task_root / "corpus.jsonl", [{"id": "d1", "text": "one"}])
-        write_jsonl(task_root / "candidates.jsonl", [{"scene_id": "s", "candidate_doc_ids": ["d1"]}])
+        write_jsonl(
+            task_root / "candidates.jsonl", [{"scene_id": "s", "candidate_doc_ids": ["d1"]}]
+        )
         write_jsonl(leaf / "queries.jsonl", [{"id": "q", "scene_id": "s", "text": "query"}])
         if with_qrels:
             (leaf / "qrels.tsv").write_text("q\td1\t1\n", encoding="utf-8")
@@ -78,7 +80,9 @@ class EvaluationDataTests(unittest.TestCase):
             child = Path(tmp) / "cqadupstack" / "android"
             write_jsonl(child / "corpus.jsonl", [{"_id": "d", "text": "doc"}])
             write_jsonl(child / "test_queries.jsonl", [{"_id": "q", "text": "query"}])
-            write_jsonl(child / "test_qrels.jsonl", [{"query-id": "q", "corpus-id": "d", "score": 1}])
+            write_jsonl(
+                child / "test_qrels.jsonl", [{"query-id": "q", "corpus-id": "d", "score": 1}]
+            )
             with self.assertRaisesRegex(ValueError, "expected 12 child"):
                 load_beir(Path(tmp), "cqadupstack")
 
@@ -158,7 +162,9 @@ class EvaluationDataTests(unittest.TestCase):
             base = root / "fiqa"
             write_jsonl(base / "corpus.jsonl", [{"_id": "d", "text": "doc"}])
             write_jsonl(base / "test_queries.jsonl", [{"_id": "q", "text": "query"}])
-            write_jsonl(base / "test_qrels.jsonl", [{"query-id": "q", "corpus-id": "d", "score": 1}])
+            write_jsonl(
+                base / "test_qrels.jsonl", [{"query-id": "q", "corpus-id": "d", "score": 1}]
+            )
             task = load_beir(root, "fiqa")[0]
             run_path = root / "run.json"
             with self.assertRaises(ValueError):
@@ -190,7 +196,9 @@ class EvaluationDataTests(unittest.TestCase):
             base = root / "fiqa"
             write_jsonl(base / "corpus.jsonl", [{"_id": "d", "text": "doc"}])
             write_jsonl(base / "test_queries.jsonl", [{"_id": "q", "text": "query"}])
-            write_jsonl(base / "test_qrels.jsonl", [{"query-id": "q", "corpus-id": "d", "score": 1}])
+            write_jsonl(
+                base / "test_qrels.jsonl", [{"query-id": "q", "corpus-id": "d", "score": 1}]
+            )
             task = load_beir(root, "fiqa")[0]
             run_path = root / "run.json"
             write_run(

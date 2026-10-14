@@ -69,9 +69,7 @@ class EvaluationPipelineTests(unittest.TestCase):
             "Given a question, retrieve detailed question descriptions from Stackexchange "
             "that are duplicates to the given question.",
         )
-        self.assertEqual(
-            _instruction(task, {"instruction": "custom"}, stage="retrieve"), "custom"
-        )
+        self.assertEqual(_instruction(task, {"instruction": "custom"}, stage="retrieve"), "custom")
 
     def test_beir_config_uses_msmarco_dev_and_identical_id_contract(self):
         config = load_config(Path(__file__).parents[1] / "configs" / "eval" / "beir.yaml")
@@ -105,8 +103,12 @@ class EvaluationPipelineTests(unittest.TestCase):
                 "reranker": {"model_name_or_path": "fake"},
             }
             with (
-                patch("lychee_reranker.evaluation.cli._build_embedder", return_value=FakeEmbedder()),
-                patch("lychee_reranker.evaluation.cli._build_reranker", return_value=FakeReranker()),
+                patch(
+                    "lychee_reranker.evaluation.cli._build_embedder", return_value=FakeEmbedder()
+                ),
+                patch(
+                    "lychee_reranker.evaluation.cli._build_reranker", return_value=FakeReranker()
+                ),
             ):
                 first = run(config, "all")
                 second = run(config, "rerank", candidate_dir=str(root / "out" / "candidates"))
@@ -166,9 +168,7 @@ class EvaluationPipelineTests(unittest.TestCase):
                 ],
             )
             for leaf in ("demo", "second"):
-                write_jsonl(
-                    data / leaf / "queries.jsonl", [{"id": "q", "text": "question"}]
-                )
+                write_jsonl(data / leaf / "queries.jsonl", [{"id": "q", "text": "question"}])
                 (data / leaf / "qrels.tsv").write_text("qid\tdocid\tscore\nq\tgood\t2\n")
             (root / "task_instructions.json").write_text(
                 json.dumps(
@@ -188,8 +188,12 @@ class EvaluationPipelineTests(unittest.TestCase):
                 "reranker": {"model_name_or_path": "fake"},
             }
             with (
-                patch("lychee_reranker.evaluation.cli._build_embedder", return_value=FakeEmbedder()),
-                patch("lychee_reranker.evaluation.cli._build_reranker", return_value=FakeReranker()),
+                patch(
+                    "lychee_reranker.evaluation.cli._build_embedder", return_value=FakeEmbedder()
+                ),
+                patch(
+                    "lychee_reranker.evaluation.cli._build_reranker", return_value=FakeReranker()
+                ),
             ):
                 first = run(config, "all")
                 second = run(config, "rerank", candidate_dir=str(root / "out" / "candidates"))

@@ -152,6 +152,7 @@ class LycheeTrainDataset(Dataset):
         passage_max_length: int = 512,
         knowledge_distillation: bool = False,
         system_instruction: str = DEFAULT_SYSTEM_INSTRUCTION,
+        seed: int = 42,
     ) -> None:
         if train_group_size < 2:
             raise ValueError("train_group_size must be at least 2")
@@ -162,6 +163,11 @@ class LycheeTrainDataset(Dataset):
         self.passage_max_length = passage_max_length
         self.knowledge_distillation = knowledge_distillation
         self.system_instruction = system_instruction
+        self.seed = int(seed)
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
 
     def __len__(self) -> int:
         return len(self.records)
@@ -186,14 +192,18 @@ class LycheeTrainDataset(Dataset):
             decoder_text, truncation=True, padding=False, add_special_tokens=False
         )
 
-        pos_index = random.randrange(len(record["pos"]))
+        # Trainer may prefetch a resumed batch before restoring global RNG
+        # state. Independent sampling makes the same record/epoch identical
+        # regardless of worker scheduling, prefetching or checkpoint resume.
+        rng = random.Random(f"{self.seed}:{self.epoch}:{index}")
+        pos_index = rng.randrange(len(record["pos"]))
         negative_pool = list(range(len(record["neg"])))
         needed = self.train_group_size - 1
         if len(negative_pool) < needed:
             repetitions = math.ceil(needed / len(negative_pool))
-            negative_indices = random.sample(negative_pool * repetitions, needed)
+            negative_indices = rng.sample(negative_pool * repetitions, needed)
         else:
-            negative_indices = random.sample(negative_pool, needed)
+            negative_indices = rng.sample(negative_pool, needed)
         documents = [record["pos"][pos_index]] + [record["neg"][i] for i in negative_indices]
         teacher_scores: Optional[List[float]] = None
         if self.knowledge_distillation:

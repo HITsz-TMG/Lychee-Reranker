@@ -328,11 +328,7 @@ def _candidate_scene(
     # Standard LMEB query IDs are often scene_0_q_0 while candidates are
     # keyed by scene_0.  Longest-prefix matching also supports analogous
     # task-specific scene names and rejects ambiguous pools.
-    matches = [
-        scene
-        for scene in scene_candidates
-        if query_id.startswith(f"{scene}_")
-    ]
+    matches = [scene for scene in scene_candidates if query_id.startswith(f"{scene}_")]
     if not matches:
         raise ValueError(f"{location}: no candidate pool for scene/query {query_id}")
     longest = max(len(scene) for scene in matches)

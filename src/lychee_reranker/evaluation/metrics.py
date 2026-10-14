@@ -9,15 +9,12 @@ def ranked_document_ids(scores: Mapping[str, float]) -> list[str]:
         if not isinstance(doc_id, str) or not math.isfinite(float(score)):
             raise ValueError("run document IDs must be strings with finite scores")
     return [
-        doc_id
-        for doc_id, _ in sorted(scores.items(), key=lambda item: (-float(item[1]), item[0]))
+        doc_id for doc_id, _ in sorted(scores.items(), key=lambda item: (-float(item[1]), item[0]))
     ]
 
 
 def _dcg(relevances: Sequence[float]) -> float:
-    return sum(
-        relevance / math.log2(index + 2) for index, relevance in enumerate(relevances)
-    )
+    return sum(relevance / math.log2(index + 2) for index, relevance in enumerate(relevances))
 
 
 def ndcg_at_k(qrels: Mapping[str, float], ranked: Sequence[str], k: int) -> float:

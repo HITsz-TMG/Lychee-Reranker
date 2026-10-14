@@ -197,9 +197,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--adapter", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--revision")
-    parser.add_argument(
-        "--dtype", choices=["bfloat16", "float16", "float32"], default="bfloat16"
-    )
+    parser.add_argument("--dtype", choices=["bfloat16", "float16", "float32"], default="bfloat16")
     parser.add_argument("--trust-remote-code", action="store_true")
     return parser.parse_args(argv)
 

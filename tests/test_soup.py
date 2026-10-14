@@ -71,7 +71,9 @@ class SoupTests(unittest.TestCase):
                 tensors = load_file(path / "model.safetensors")
                 (path / "model.safetensors").unlink()
                 save_file({"float": tensors["float"]}, path / "model-00001-of-00002.safetensors")
-                save_file({"integer": tensors["integer"]}, path / "model-00002-of-00002.safetensors")
+                save_file(
+                    {"integer": tensors["integer"]}, path / "model-00002-of-00002.safetensors"
+                )
                 (path / "model.safetensors.index.json").write_text(
                     json.dumps(
                         {

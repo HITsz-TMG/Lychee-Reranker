@@ -46,15 +46,11 @@ class DenseEmbedderAttentionTests(unittest.TestCase):
             use_cache=False,
             return_dict=True,
         ).last_hidden_state
-        self.assertGreater(
-            float((output[:, 0] - changed_output[:, 0]).abs().max().detach()), 1e-5
-        )
+        self.assertGreater(float((output[:, 0] - changed_output[:, 0]).abs().max().detach()), 1e-5)
 
         padded = torch.tensor([[1, 2, 3, 0]])
         changed_padding = torch.tensor([[1, 2, 3, 7]])
-        padding_mask = DenseEmbedder._bidirectional_attention_mask(
-            torch.tensor([[1, 1, 1, 0]])
-        )
+        padding_mask = DenseEmbedder._bidirectional_attention_mask(torch.tensor([[1, 1, 1, 0]]))
         padded_output = model(
             input_ids=padded,
             attention_mask=padding_mask,

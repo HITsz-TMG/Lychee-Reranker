@@ -93,13 +93,16 @@ def test_tiny_t5gemma2_two_rank_training_and_resume(tmp_path):
     base = tmp_path / "base"
     _tiny_base(base)
     data = tmp_path / "data.jsonl"
-    record = {
-        "query": "question",
-        "prompt": "Retrieve an answer.",
-        "pos": ["answer"],
-        "neg": ["unrelated", "unrelated answer"],
-    }
-    data.write_text("".join(json.dumps(record) + "\n" for _ in range(8)))
+    records = [
+        {
+            "query": "question " + "answer " * i,
+            "prompt": "Retrieve an answer.",
+            "pos": ["answer", "question answer"],
+            "neg": ["unrelated", "unrelated answer", "question unrelated unrelated"],
+        }
+        for i in range(8)
+    ]
+    data.write_text("".join(json.dumps(record) + "\n" for record in records))
     config = yaml.safe_load((root / "configs/train/nano_sft.yaml").read_text())
     config["model"].update(name_or_path=str(base), dtype="float32")
     config["model"]["lora"].update(rank=2, alpha=1)
@@ -134,6 +137,7 @@ def test_tiny_t5gemma2_two_rank_training_and_resume(tmp_path):
         CUDA_VISIBLE_DEVICES="",
         OMP_NUM_THREADS="1",
         MKL_NUM_THREADS="1",
+        TORCHINDUCTOR_COMPILE_THREADS="1",
         HF_HUB_OFFLINE="1",
         HF_DATASETS_OFFLINE="1",
         TOKENIZERS_PARALLELISM="false",

@@ -127,17 +127,11 @@ def restrict_candidates(
         return {query_id: dict(scores) for query_id, scores in run.items()}
     if set(run) != set(candidates):
         raise ValueError("candidate/query coverage mismatch")
-    if any(
-        not math.isfinite(float(score))
-        for scores in run.values()
-        for score in scores.values()
-    ):
+    if any(not math.isfinite(float(score)) for scores in run.values() for score in scores.values()):
         raise ValueError("candidate scores must be finite")
     return {
         query_id: {
-            doc_id: score
-            for doc_id, score in run[query_id].items()
-            if doc_id in set(doc_ids)
+            doc_id: score for doc_id, score in run[query_id].items() if doc_id in set(doc_ids)
         }
         for query_id, doc_ids in candidates.items()
     }

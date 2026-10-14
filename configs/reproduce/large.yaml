@@ -5,8 +5,27 @@ sft_config: configs/train/large_sft.yaml
 sft_adapter: outputs/large/sft-adapter
 sft_merged: outputs/large/sft-merged
 distillation:
-  - {config: configs/train/large_distill_r64.yaml, adapter: outputs/large/kd-r64-adapter, merged: outputs/large/kd-r64-merged, expected_release_checkpoint_step: 30354}
-  - {config: configs/train/large_distill_r96.yaml, adapter: outputs/large/kd-r96-adapter, merged: outputs/large/kd-r96-merged, expected_release_checkpoint_step: 30354}
-model_soup: {weights: [0.5, 0.5], output: outputs/large/release2}
-training_contract: {world_size: 32, global_query_batch_size: 128, train_group_size: 16, mep_ratios: [2, 8, 32, 128]}
-provenance: {bitwise_reproduction_claimed: false, note: Exact source revisions and random-state artifacts were not present in the source snapshot.}
+- config: configs/train/large_distill_r64.yaml
+  adapter: outputs/large/kd-r64-adapter
+  merged: outputs/large/kd-r64-merged
+- config: configs/train/large_distill_r96.yaml
+  adapter: outputs/large/kd-r96-adapter
+  merged: outputs/large/kd-r96-merged
+model_soup:
+  weights:
+  - 0.5
+  - 0.5
+  output: outputs/large/final
+training_contract:
+  world_size: 32
+  global_query_batch_size: 128
+  train_group_size: 16
+  mep_ratios:
+  - 2
+  - 8
+  - 32
+  - 128
+provenance:
+  bitwise_reproduction_claimed: false
+  note: Exact source revisions and random-state artifacts were not present in the
+    source snapshot.

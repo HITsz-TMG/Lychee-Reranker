@@ -169,9 +169,7 @@ def soup_models(
                         accumulator_dtype = (
                             torch.float64 if reference.dtype == torch.float64 else torch.float32
                         )
-                        merged = torch.zeros(
-                            reference.shape, dtype=accumulator_dtype, device="cpu"
-                        )
+                        merged = torch.zeros(reference.shape, dtype=accumulator_dtype, device="cpu")
                         for weight, tensor in zip(normalized, tensors):
                             merged.add_(tensor.to(accumulator_dtype), alpha=weight)
                         output_tensor = merged.to(reference.dtype).contiguous()

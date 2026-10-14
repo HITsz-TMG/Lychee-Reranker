@@ -211,7 +211,9 @@ def _safe_weight_path(model_dir: Path, filename: str) -> Path:
     except ValueError as error:
         raise ValueError(f"safetensors shard escapes model directory: {filename}") from error
     if not candidate.is_file():
-        raise FileNotFoundError(f"safetensors shard is outside model directory or missing: {filename}")
+        raise FileNotFoundError(
+            f"safetensors shard is outside model directory or missing: {filename}"
+        )
     return candidate
 
 
@@ -223,7 +225,9 @@ def weight_map(model_dir: Path) -> dict[str, Path]:
     index_path = model_dir / "model.safetensors.index.json"
     single = model_dir / "model.safetensors"
     if index_path.is_file() and single.is_file():
-        raise ValueError(f"checkpoint contains both an index and an unindexed weight file: {model_dir}")
+        raise ValueError(
+            f"checkpoint contains both an index and an unindexed weight file: {model_dir}"
+        )
     if index_path.is_file():
         index = read_mapping(index_path)
         mapping = index.get("weight_map")
@@ -363,11 +367,15 @@ def staged_output(destination: str | Path) -> Iterator[Path]:
     try:
         lock.mkdir()
     except FileExistsError as error:
-        raise FileExistsError(f"output directory is already being created: {destination}") from error
+        raise FileExistsError(
+            f"output directory is already being created: {destination}"
+        ) from error
     try:
         if destination.exists():
             raise FileExistsError(f"refusing to overwrite output directory: {destination}")
-        with tempfile.TemporaryDirectory(prefix=f".{destination.name}.", dir=destination.parent) as root:
+        with tempfile.TemporaryDirectory(
+            prefix=f".{destination.name}.", dir=destination.parent
+        ) as root:
             temporary = Path(root) / "model"
             temporary.mkdir()
             yield temporary

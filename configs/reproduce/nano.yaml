@@ -5,22 +5,27 @@ sft_config: configs/train/nano_sft.yaml
 sft_adapter: outputs/nano/sft-adapter
 sft_merged: outputs/nano/sft-merged
 distillation:
-  - config: configs/train/nano_distill_r64.yaml
-    adapter: outputs/nano/kd-r64-adapter
-    merged: outputs/nano/kd-r64-merged
-    expected_release_checkpoint_step: 30354
-  - config: configs/train/nano_distill_r96.yaml
-    adapter: outputs/nano/kd-r96-adapter
-    merged: outputs/nano/kd-r96-merged
-    expected_release_checkpoint_step: 30354
+- config: configs/train/nano_distill_r64.yaml
+  adapter: outputs/nano/kd-r64-adapter
+  merged: outputs/nano/kd-r64-merged
+- config: configs/train/nano_distill_r96.yaml
+  adapter: outputs/nano/kd-r96-adapter
+  merged: outputs/nano/kd-r96-merged
 model_soup:
-  weights: [0.5, 0.5]
-  output: outputs/nano/release2
+  weights:
+  - 0.5
+  - 0.5
+  output: outputs/nano/final
 training_contract:
   world_size: 32
   global_query_batch_size: 128
   train_group_size: 16
-  mep_ratios: [2, 8, 32, 128]
+  mep_ratios:
+  - 2
+  - 8
+  - 32
+  - 128
 provenance:
   bitwise_reproduction_claimed: false
-  note: The canonical Nano r96 KD launcher was absent; this branch is reconstructed from final adapter metadata and the shared KD recipe.
+  note: The canonical Nano r96 KD launcher was absent; this branch is reconstructed
+    from final adapter metadata and the shared KD recipe.

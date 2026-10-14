@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import torch
-from transformers import Trainer
+from transformers import Trainer, TrainerCallback
 from transformers.trainer import (
     OPTIMIZER_NAME,
     SCHEDULER_NAME,
@@ -12,11 +12,25 @@ from transformers.trainer import (
 )
 
 
+class DatasetEpochCallback(TrainerCallback):
+    """Set sampling epoch even when a distributed sampler intercepts it."""
+
+    def __init__(self, dataset):
+        self.dataset = dataset
+
+    def on_epoch_begin(self, args, state, control, **kwargs):
+        # On resume state.epoch can be fractional; it identifies the current
+        # epoch. This callback runs before the first batch is fetched.
+        self.dataset.set_epoch(int(state.epoch or 0))
+
+
 class LycheeTrainer(Trainer):
     """Trainer that preserves PEFT adapter and optimizer resume semantics."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        if hasattr(self.train_dataset, "set_epoch"):
+            self.add_callback(DatasetEpochCallback(self.train_dataset))
         if getattr(self.args, "deepspeed", None) is not None:
             raise ValueError(
                 "DeepSpeed is unsupported by LycheeTrainer; use native torchrun/DDP "
@@ -62,8 +76,10 @@ class LycheeTrainer(Trainer):
             Path(resume_from_checkpoint) / "adapter_model.safetensors",
             Path(resume_from_checkpoint) / "adapter_model.bin",
         )
-        if peft_model is not None and hasattr(peft_model, "load_adapter") and any(
-            path.is_file() for path in adapter_files
+        if (
+            peft_model is not None
+            and hasattr(peft_model, "load_adapter")
+            and any(path.is_file() for path in adapter_files)
         ):
             active_adapters = getattr(peft_model, "active_adapters", ["default"])
             if isinstance(active_adapters, str):

@@ -5,7 +5,12 @@ import torch.nn.functional as F
 from torch import nn
 from transformers.modeling_outputs import BaseModelOutput, Seq2SeqLMOutput
 
-from lychee_reranker.train.model import LycheeRerankerTrainingModel, kd_loss, mean_pool_chunks, sft_loss
+from lychee_reranker.train.model import (
+    LycheeRerankerTrainingModel,
+    kd_loss,
+    mean_pool_chunks,
+    sft_loss,
+)
 
 
 class StubTokenizer:
@@ -58,9 +63,7 @@ class ModelMathTests(unittest.TestCase):
     def test_sft_labels_first_passage_positive(self):
         logits = torch.tensor([[0.0, 2.0], [2.0, 0.0], [0.0, 1.0], [1.0, 0.0]])
         margins = logits[:, 1] - logits[:, 0]
-        expected = F.binary_cross_entropy_with_logits(
-            margins, torch.tensor([1.0, 0.0, 1.0, 0.0])
-        )
+        expected = F.binary_cross_entropy_with_logits(margins, torch.tensor([1.0, 0.0, 1.0, 0.0]))
         self.assertTrue(torch.allclose(sft_loss(logits, 2), expected))
 
     def test_sft_uses_actual_query_group_count(self):
@@ -69,9 +72,7 @@ class ModelMathTests(unittest.TestCase):
             logits[:, 1] - logits[:, 0], torch.tensor([1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
         )
         self.assertTrue(
-            torch.allclose(
-                sft_loss(logits, train_group_size=3, num_query_groups=2), expected
-            )
+            torch.allclose(sft_loss(logits, train_group_size=3, num_query_groups=2), expected)
         )
         with self.assertRaisesRegex(ValueError, "query groups"):
             sft_loss(logits, train_group_size=3, num_query_groups=1)
@@ -104,9 +105,7 @@ class ModelMathTests(unittest.TestCase):
         )
         output = wrapper(
             encoder_input_ids=torch.tensor([[1, 2, 0], [3, 4, 0], [5, 6, 0], [1, 3, 0]]),
-            encoder_attention_mask=torch.tensor(
-                [[1, 1, 0], [1, 1, 0], [1, 1, 0], [1, 1, 0]]
-            ),
+            encoder_attention_mask=torch.tensor([[1, 1, 0], [1, 1, 0], [1, 1, 0], [1, 1, 0]]),
             decoder_input_ids=torch.tensor([[1, 2], [1, 2], [1, 2], [1, 2]]),
             decoder_attention_mask=torch.tensor([[1, 1], [1, 1], [1, 1], [1, 1]]),
             num_query_groups=torch.tensor(2),

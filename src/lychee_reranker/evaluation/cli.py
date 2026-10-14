@@ -51,9 +51,7 @@ def _tasks(config: Dict[str, Any]) -> List[EvaluationTask]:
     raise ValueError("benchmark must be one of: beir, miracl, lmeb")
 
 
-def _instruction(
-    task: EvaluationTask, config: Dict[str, Any], *, stage: str = "rerank"
-) -> str:
+def _instruction(task: EvaluationTask, config: Dict[str, Any], *, stage: str = "rerank") -> str:
     explicit = config.get("instruction")
     if explicit is not None:
         return str(explicit)
@@ -63,9 +61,7 @@ def _instruction(
     if task.benchmark.casefold() == "beir":
         dataset = task.name.split("/", maxsplit=1)[0].casefold()
         instructions = (
-            BEIR_RETRIEVER_INSTRUCTIONS
-            if stage == "retrieve"
-            else BEIR_RERANKER_INSTRUCTIONS
+            BEIR_RETRIEVER_INSTRUCTIONS if stage == "retrieve" else BEIR_RERANKER_INSTRUCTIONS
         )
         if dataset in instructions:
             return instructions[dataset]

@@ -55,10 +55,14 @@ def _validate_run(task, run: Mapping[str, Mapping[str, float]]) -> None:
     for query_id, scores in run.items():
         if not isinstance(scores, Mapping):
             raise ValueError(f"{task.name}/{query_id}: run scores must be a mapping")
-        allowed = set(task.candidates[query_id]) if task.candidates is not None else set(task.corpus)
+        allowed = (
+            set(task.candidates[query_id]) if task.candidates is not None else set(task.corpus)
+        )
         unknown = sorted(set(scores) - allowed)
         if unknown:
-            raise ValueError(f"{task.name}/{query_id}: run references unknown documents {unknown[:3]}")
+            raise ValueError(
+                f"{task.name}/{query_id}: run references unknown documents {unknown[:3]}"
+            )
         for document_id, score in scores.items():
             if not isinstance(document_id, str):
                 raise ValueError(f"{task.name}/{query_id}: document IDs must be strings")
@@ -189,9 +193,7 @@ def write_summary(
             + " |"
         )
     if group_rows:
-        group_metrics = sorted(
-            {metric for values in group_rows.values() for metric in values}
-        )
+        group_metrics = sorted({metric for values in group_rows.values() for metric in values})
         lines.append("")
         lines.append("LMEB group macro")
         lines.append("| Group | " + " | ".join(group_metrics) + " |")
@@ -205,8 +207,7 @@ def write_summary(
                 + " |"
             )
         group_macro = {
-            metric: sum(values.get(metric, 0.0) for values in group_rows.values())
-            / len(group_rows)
+            metric: sum(values.get(metric, 0.0) for values in group_rows.values()) / len(group_rows)
             for metric in group_metrics
         }
         lines.append(
