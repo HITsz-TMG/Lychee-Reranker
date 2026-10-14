@@ -27,7 +27,14 @@ def _tasks(config: Dict[str, Any]) -> List[EvaluationTask]:
     if benchmark == "beir":
         names = config.get("tasks", list(BEIR_V1_TASKS))
         split = config.get("split", "test")
-        return [task for name in names for task in load_beir(root, name, split)]
+        split_overrides = config.get("splits", {})
+        if not isinstance(split_overrides, dict):
+            raise ValueError("splits must be a mapping from BEIR task to split")
+        return [
+            task
+            for name in names
+            for task in load_beir(root, name, split_overrides.get(name, split))
+        ]
     if benchmark == "miracl":
         names = config.get("tasks", list(MIRACL_LANGUAGES))
         split = config.get("split", "dev")
@@ -79,6 +86,32 @@ def _aggregate_rows(rows: Dict[str, Dict[str, float]]) -> Dict[str, Dict[str, fl
         for name in cqa_names:
             del result[name]
     return result
+
+
+def _aggregate_lmeb_groups(rows: Dict[str, Dict[str, float]]) -> Dict[str, Dict[str, float]]:
+    grouped: Dict[str, List[Dict[str, float]]] = {}
+    for name, values in rows.items():
+        parts = name.split("/")
+        # Standard LMEB paths are category/task/leaf.  The paper macro gives
+        # each task group (the six Dialogue groups by default) equal weight,
+        # after averaging its leaves.
+        if len(parts) >= 3 and parts[0].casefold() in {
+            "dialogue",
+            "episodic",
+            "procedural",
+            "semantic",
+        }:
+            group = parts[1]
+        else:
+            group = parts[0]
+        grouped.setdefault(group, []).append(values)
+    return {
+        group: {
+            metric: sum(values.get(metric, 0.0) for values in group_values) / len(group_values)
+            for metric in sorted({metric for values in group_values for metric in values})
+        }
+        for group, group_values in sorted(grouped.items())
+    }
 
 
 def run(
@@ -162,12 +195,23 @@ def run(
             metrics=task_metrics,
         )
     if stage != "retrieve":
+        benchmark = config["benchmark"].lower()
         summary = _aggregate_rows(task_rows)
+        group_summary = _aggregate_lmeb_groups(task_rows) if benchmark == "lmeb" else {}
         metric_names = sorted({metric for values in summary.values() for metric in values})
-        macro = {
+        leaf_macro = {
             metric: sum(values.get(metric, 0.0) for values in summary.values()) / len(summary)
             for metric in metric_names
         }
+        group_metric_names = sorted(
+            {metric for values in group_summary.values() for metric in values}
+        )
+        group_macro = {
+            metric: sum(values.get(metric, 0.0) for values in group_summary.values())
+            / len(group_summary)
+            for metric in group_metric_names
+        }
+        macro = group_macro if benchmark == "lmeb" else leaf_macro
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "summary.json").write_text(
             json.dumps(
@@ -177,6 +221,9 @@ def run(
                     "tasks": task_rows,
                     "aggregate": summary,
                     "macro_average": macro,
+                    "leaf_macro_average": leaf_macro,
+                    "group_aggregate": group_summary,
+                    "group_macro_average": group_macro,
                 },
                 indent=2,
                 sort_keys=True,
@@ -184,7 +231,7 @@ def run(
             + "\n",
             encoding="utf-8",
         )
-        write_summary(output_dir / "summary.md", summary)
+        write_summary(output_dir / "summary.md", summary, group_rows=group_summary)
         return summary
     return {}
 
@@ -197,6 +244,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--data-dir")
     parser.add_argument("--output-dir")
     parser.add_argument("--candidate-dir")
+    parser.add_argument("--reranker-name-or-path")
+    parser.add_argument("--embedder-name-or-path")
     return parser.parse_args(argv)
 
 
@@ -207,6 +256,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         value = getattr(args, key)
         if value is not None:
             config[key] = value
+    if args.reranker_name_or_path:
+        config.setdefault("reranker", {})["model_name_or_path"] = args.reranker_name_or_path
+    if args.embedder_name_or_path:
+        config.setdefault("embedder", {})["model_name_or_path"] = args.embedder_name_or_path
     missing = [key for key in ("benchmark", "data_dir", "output_dir") if key not in config]
     if missing:
         raise ValueError(f"missing evaluation configuration keys: {missing}")

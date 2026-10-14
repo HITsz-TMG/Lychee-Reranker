@@ -45,6 +45,8 @@ class LycheeReranker:
             raise ValueError("batch and maximum lengths must be positive")
         if chunk_size is not None and chunk_size <= 0:
             raise ValueError("chunk_size must be positive or None")
+        if not isinstance(instruction, str) or not isinstance(system_instruction, str):
+            raise TypeError("instruction and system_instruction must be strings")
         self.model_name_or_path = model_name_or_path
         self.revision = revision
         self.device = self._resolve_device(device)
@@ -195,12 +197,22 @@ class LycheeReranker:
             add_special_tokens=False,
             return_tensors="pt",
         ).to(self.device)
+        decoder_attention_mask = decoder_batch["attention_mask"]
+        positions = decoder_attention_mask.long().sum(dim=1) - 1
+        if (positions < 0).any():
+            raise ValueError("decoder batches must contain at least one unpadded token")
+        # T5Gemma2 accepts a tensor of decoder positions and returns only those
+        # logits.  Deduplicating the positions keeps the output shape small for
+        # right-padded batches while preserving the per-example lookup below.
+        keep_positions, inverse = torch.unique(positions, sorted=True, return_inverse=True)
         if self.chunk_size is None:
             outputs = self.model(
                 input_ids=encoder_batch["input_ids"],
                 attention_mask=encoder_batch["attention_mask"],
                 decoder_input_ids=decoder_batch["input_ids"],
-                decoder_attention_mask=decoder_batch["attention_mask"],
+                decoder_attention_mask=decoder_attention_mask,
+                logits_to_keep=keep_positions,
+                use_cache=False,
                 return_dict=True,
             )
         else:
@@ -218,12 +230,18 @@ class LycheeReranker:
                 encoder_outputs=BaseModelOutput(last_hidden_state=pooled),
                 attention_mask=pooled_mask,
                 decoder_input_ids=decoder_batch["input_ids"],
-                decoder_attention_mask=decoder_batch["attention_mask"],
+                decoder_attention_mask=decoder_attention_mask,
+                logits_to_keep=keep_positions,
+                use_cache=False,
                 return_dict=True,
             )
-        positions = decoder_batch["attention_mask"].sum(dim=1) - 1
-        batch_indices = torch.arange(outputs.logits.shape[0], device=self.device)
-        last_logits = outputs.logits[batch_indices, positions]
+        if outputs.logits.ndim != 3 or outputs.logits.shape[0] != len(pairs):
+            raise RuntimeError(
+                "reranker model must return [batch, selected_decoder_positions, vocab] "
+                f"when logits_to_keep is used; got {tuple(outputs.logits.shape)}"
+            )
+        batch_indices = torch.arange(len(pairs), device=outputs.logits.device)
+        last_logits = outputs.logits[batch_indices, inverse.to(outputs.logits.device)]
         yes_no = torch.stack(
             (last_logits[:, self.yes_token_id], last_logits[:, self.no_token_id]), dim=-1
         ).float()
@@ -250,7 +268,9 @@ class LycheeReranker:
         if not isinstance(effective_batch, int) or effective_batch <= 0:
             raise ValueError("batch_size must be a positive integer")
 
-        sorted_indices = np.argsort([-(len(q) + len(d)) for q, d in validated])
+        sorted_indices = np.argsort(
+            [-(len(q) + len(d)) for q, d in validated], kind="stable"
+        )
         sorted_pairs = [validated[index] for index in sorted_indices]
         tested_batch = effective_batch
         first_scores: Optional[List[float]] = None

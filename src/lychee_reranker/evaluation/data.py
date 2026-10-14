@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import json
+import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence
@@ -58,7 +60,9 @@ def _document_text(record: Mapping[str, object], location: str) -> str:
         title = ""
     if not isinstance(title, str):
         raise ValueError(f"{location}: title must be a string")
-    return f"{title}\n{text}".strip()
+    # FlagEmbedding's BEIR/MIRACL/LMEB loaders concatenate title and body
+    # with one space.  Keep the same text contract for retrieval parity.
+    return f"{title} {text}".strip()
 
 
 def _load_corpus(path: Path, id_fields: Sequence[str]) -> Dict[str, str]:
@@ -100,7 +104,41 @@ def _load_jsonl_qrels(
                 break
         if value is None:
             raise ValueError(f"{path}:{index}: relevance score is missing")
-        result.setdefault(query_id, {})[document_id] = float(value)
+        score = float(value)
+        if not math.isfinite(score):
+            raise ValueError(f"{path}:{index}: relevance score must be finite")
+        if document_id in result.setdefault(query_id, {}):
+            raise ValueError(f"{path}:{index}: duplicate relevance for {query_id}/{document_id}")
+        result[query_id][document_id] = score
+    return result
+
+
+def _load_tsv_qrels(path: Path) -> Dict[str, Dict[str, float]]:
+    """Read BEIR's standard qrels/{split}.tsv (with or without a header)."""
+    result: Dict[str, Dict[str, float]] = {}
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        for row_number, row in enumerate(csv.reader(handle, delimiter="\t"), start=1):
+            if not row or not any(cell.strip() for cell in row):
+                continue
+            normalized = [cell.strip().casefold() for cell in row]
+            if normalized[0] in {"query-id", "qid", "query_id"}:
+                continue
+            if len(row) >= 4:
+                # TREC-style qrels have qid, iteration, docid, relevance.
+                query_id, document_id, raw_score = row[0], row[2], row[3]
+            elif len(row) >= 3:
+                query_id, document_id, raw_score = row[0], row[1], row[2]
+            else:
+                raise ValueError(f"{path}:{row_number}: expected qid, docid, score")
+            score = float(raw_score)
+            if not math.isfinite(score):
+                raise ValueError(f"{path}:{row_number}: relevance score must be finite")
+            query_id, document_id = str(query_id), str(document_id)
+            if document_id in result.setdefault(query_id, {}):
+                raise ValueError(
+                    f"{path}:{row_number}: duplicate relevance for {query_id}/{document_id}"
+                )
+            result[query_id][document_id] = score
     return result
 
 
@@ -113,6 +151,28 @@ def _require_consistent(task: EvaluationTask) -> EvaluationTask:
     )
     if unknown_documents:
         raise ValueError(f"{task.name}: qrels reference unknown documents: {unknown_documents[:3]}")
+    for query_id, relevance in task.qrels.items():
+        if any(not math.isfinite(float(score)) for score in relevance.values()):
+            raise ValueError(f"{task.name}/{query_id}: qrels contain a non-finite score")
+    if task.candidates is not None:
+        missing_queries = sorted(set(task.queries) - set(task.candidates))
+        extra_queries = sorted(set(task.candidates) - set(task.queries))
+        if missing_queries or extra_queries:
+            raise ValueError(
+                f"{task.name}: candidate/query coverage mismatch; "
+                f"missing={missing_queries[:3]}, extra={extra_queries[:3]}"
+            )
+        for query_id, document_ids in task.candidates.items():
+            if not document_ids:
+                raise ValueError(f"{task.name}/{query_id}: candidate pool is empty")
+            if len(document_ids) != len(set(document_ids)):
+                raise ValueError(f"{task.name}/{query_id}: candidate pool contains duplicates")
+            unknown = sorted(set(document_ids) - set(task.corpus))
+            if unknown:
+                raise ValueError(
+                    f"{task.name}/{query_id}: candidate pool references unknown documents "
+                    f"{unknown[:3]}"
+                )
     return task
 
 
@@ -123,21 +183,55 @@ def load_beir(root: str | Path, dataset: str, split: str = "test") -> List[Evalu
     leaves = [base]
     if not (base / "corpus.jsonl").is_file():
         leaves = sorted(path.parent for path in base.rglob("corpus.jsonl"))
+        if dataset.casefold() == "cqadupstack":
+            expected = {
+                "android",
+                "english",
+                "gaming",
+                "gis",
+                "mathematica",
+                "physics",
+                "programmers",
+                "stats",
+                "tex",
+                "unix",
+                "webmasters",
+                "wordpress",
+            }
+            available = {path.relative_to(base).parts[0] for path in leaves}
+            if available != expected:
+                raise ValueError(
+                    f"{dataset}: expected 12 child datasets; "
+                    f"missing={sorted(expected - available)}, extra={sorted(available - expected)}"
+                )
     tasks = []
     for leaf in leaves:
         suffix = "" if leaf == base else f"/{leaf.relative_to(base).as_posix()}"
+        queries_path = leaf / f"{split}_queries.jsonl"
+        if not queries_path.is_file():
+            queries_path = leaf / "queries.jsonl"
+        jsonl_qrels_path = leaf / f"{split}_qrels.jsonl"
+        tsv_qrels_path = leaf / "qrels" / f"{split}.tsv"
+        if jsonl_qrels_path.is_file():
+            qrels = _load_jsonl_qrels(
+                jsonl_qrels_path,
+                ("query-id", "qid", "query_id"),
+                ("corpus-id", "docid", "doc_id"),
+                ("score", "relevance"),
+            )
+        elif tsv_qrels_path.is_file():
+            qrels = _load_tsv_qrels(tsv_qrels_path)
+        else:
+            raise FileNotFoundError(
+                f"could not find {split}_qrels.jsonl or qrels/{split}.tsv below {leaf}"
+            )
         task = EvaluationTask(
             name=f"{dataset}{suffix}",
             benchmark="beir",
             split=split,
             corpus=_load_corpus(leaf / "corpus.jsonl", ("_id", "id")),
-            queries=_load_queries(leaf / f"{split}_queries.jsonl", ("_id", "id"))[0],
-            qrels=_load_jsonl_qrels(
-                leaf / f"{split}_qrels.jsonl",
-                ("query-id", "qid", "query_id"),
-                ("corpus-id", "docid", "doc_id"),
-                ("score", "relevance"),
-            ),
+            queries=_load_queries(queries_path, ("_id", "id", "query_id", "qid"))[0],
+            qrels=qrels,
         )
         tasks.append(_require_consistent(task))
     if not tasks:
@@ -185,7 +279,15 @@ def _load_lmeb_qrels(path: Path) -> Dict[str, Dict[str, float]]:
                 continue
             if len(row) < 3:
                 raise ValueError(f"{path}:{row_number}: expected qid, docid, score")
-            result.setdefault(str(row[0]), {})[str(row[1])] = float(row[2])
+            query_id, document_id = str(row[0]), str(row[1])
+            score = float(row[2])
+            if not math.isfinite(score):
+                raise ValueError(f"{path}:{row_number}: relevance score must be finite")
+            if document_id in result.setdefault(query_id, {}):
+                raise ValueError(
+                    f"{path}:{row_number}: duplicate relevance for {query_id}/{document_id}"
+                )
+            result[query_id][document_id] = score
     return result
 
 
@@ -195,11 +297,84 @@ def _load_lmeb_candidates(path: Path) -> Dict[str, List[str]]:
         scene = _identifier(record, ("scene_id", "query_id", "qid", "id"), f"{path}:{index}")
         values = record.get("candidate_doc_ids")
         if not isinstance(values, list) or any(
-            not isinstance(value, (str, int)) for value in values
+            isinstance(value, bool) or not isinstance(value, (str, int)) for value in values
         ):
             raise ValueError(f"{path}:{index}: candidate_doc_ids must be a list")
-        result[scene] = [str(value) for value in values]
+        if scene in result:
+            raise ValueError(f"{path}:{index}: duplicate candidate scene {scene}")
+        document_ids = [str(value) for value in values]
+        if not document_ids:
+            raise ValueError(f"{path}:{index}: candidate_doc_ids must not be empty")
+        if len(document_ids) != len(set(document_ids)):
+            raise ValueError(f"{path}:{index}: candidate_doc_ids contains duplicates")
+        result[scene] = document_ids
     return result
+
+
+def _candidate_scene(
+    query_id: str,
+    record: Mapping[str, object],
+    scene_candidates: Mapping[str, Sequence[str]],
+    location: str,
+) -> str:
+    explicit_scene = record.get("scene_id")
+    if explicit_scene is not None:
+        scene = str(explicit_scene)
+        if scene not in scene_candidates:
+            raise ValueError(f"{location}: no candidate pool for scene/query {scene}")
+        return scene
+    if query_id in scene_candidates:
+        return query_id
+    # Standard LMEB query IDs are often scene_0_q_0 while candidates are
+    # keyed by scene_0.  Longest-prefix matching also supports analogous
+    # task-specific scene names and rejects ambiguous pools.
+    matches = [
+        scene
+        for scene in scene_candidates
+        if query_id.startswith(f"{scene}_")
+    ]
+    if not matches:
+        raise ValueError(f"{location}: no candidate pool for scene/query {query_id}")
+    longest = max(len(scene) for scene in matches)
+    matches = [scene for scene in matches if len(scene) == longest]
+    if len(matches) != 1:
+        raise ValueError(f"{location}: ambiguous candidate pools for query {query_id}: {matches}")
+    return matches[0]
+
+
+def _normalize_instruction_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.casefold())
+
+
+def _resolve_lmeb_instruction(name: str, raw: Mapping[str, object]) -> Optional[str]:
+    """Resolve the source LMEB task/subset instruction without absolute paths."""
+    parts = name.replace("\\", "/").split("/")
+    normalized_parts = [_normalize_instruction_name(part) for part in parts]
+    task_instructions: Optional[Mapping[str, object]] = None
+    for key, value in raw.items():
+        if _normalize_instruction_name(str(key)) in normalized_parts and isinstance(value, dict):
+            task_instructions = value
+            break
+    if task_instructions is None:
+        for key, value in raw.items():
+            normalized_key = _normalize_instruction_name(str(key))
+            if isinstance(value, dict) and any(
+                normalized_key.endswith(part) or part.endswith(normalized_key)
+                for part in normalized_parts
+            ):
+                task_instructions = value
+                break
+    if task_instructions is None:
+        return None
+    for part in reversed(parts):
+        normalized_part = _normalize_instruction_name(part)
+        for sub_key, instruction in task_instructions.items():
+            if _normalize_instruction_name(str(sub_key)) == normalized_part:
+                return instruction if isinstance(instruction, str) else None
+    if len(task_instructions) == 1:
+        instruction = next(iter(task_instructions.values()))
+        return instruction if isinstance(instruction, str) else None
+    return None
 
 
 def _load_task_instructions(root: Path) -> Mapping[str, object]:
@@ -218,11 +393,14 @@ def load_lmeb(root: str | Path, groups: Sequence[str]) -> List[EvaluationTask]:
         raise FileNotFoundError(f"LMEB directory not found: {base}")
     instructions = _load_task_instructions(base)
     tasks = []
-    requested = {group.casefold() for group in groups}
+    if isinstance(groups, str):
+        groups = [groups]
+    requested = {str(group).casefold() for group in groups}
     for queries_path in sorted(base.rglob("queries.jsonl")):
         leaf = queries_path.parent
-        relative_parts = {part.casefold() for part in leaf.relative_to(base).parts}
-        if requested and not (requested & relative_parts):
+        relative_name = leaf.relative_to(base).as_posix()
+        relative_parts = {part.casefold() for part in relative_name.split("/")}
+        if requested and relative_name.casefold() not in requested and not (requested & relative_parts):
             continue
         qrels_path = leaf / "qrels.tsv"
         if not qrels_path.is_file():
@@ -230,19 +408,46 @@ def load_lmeb(root: str | Path, groups: Sequence[str]) -> List[EvaluationTask]:
         corpus_path = _nearest_parent_file(leaf, base, "corpus.jsonl")
         candidates_path = _nearest_parent_file(leaf, base, "candidates.jsonl")
         queries, metadata = _load_queries(queries_path, ("_id", "id", "query_id", "qid"))
+        corpus = _load_corpus(corpus_path, ("_id", "id", "docid", "doc_id"))
         scene_candidates = _load_lmeb_candidates(candidates_path)
+        unknown_candidate_documents = sorted(
+            {
+                document_id
+                for document_ids in scene_candidates.values()
+                for document_id in document_ids
+                if document_id not in corpus
+            }
+        )
+        if unknown_candidate_documents:
+            raise ValueError(
+                f"{candidates_path}: candidate pool references unknown documents "
+                f"{unknown_candidate_documents[:3]}"
+            )
         candidates: Dict[str, List[str]] = {}
         for query_id, record in metadata.items():
-            scene = str(record.get("scene_id", query_id))
-            if scene not in scene_candidates:
-                raise ValueError(f"{queries_path}: no candidate pool for scene/query {scene}")
+            scene = _candidate_scene(query_id, record, scene_candidates, str(queries_path))
             candidates[query_id] = scene_candidates[scene]
         qrels = _load_lmeb_qrels(qrels_path)
+        unknown_queries = sorted(set(qrels) - set(queries))
+        if unknown_queries:
+            raise ValueError(
+                f"{qrels_path}: qrels reference unknown queries: {unknown_queries[:3]}"
+            )
+        unknown_documents = sorted(
+            {document_id for relevance in qrels.values() for document_id in relevance} - set(corpus)
+        )
+        if unknown_documents:
+            raise ValueError(
+                f"{qrels_path}: qrels reference unknown documents: {unknown_documents[:3]}"
+            )
         filtered_qrels = {
             query_id: {
                 doc_id: score
                 for doc_id, score in relevance.items()
-                if doc_id in set(candidates.get(query_id, []))
+                # Keep non-positive judgments for parity with the source
+                # loader; positive judgments outside a restricted pool cannot
+                # be retrieved and are excluded from this task's denominator.
+                if score <= 0 or doc_id in set(candidates[query_id])
             }
             for query_id, relevance in qrels.items()
         }
@@ -252,13 +457,13 @@ def load_lmeb(root: str | Path, groups: Sequence[str]) -> List[EvaluationTask]:
             if any(score > 0 for score in relevance.values())
         }
         name = leaf.relative_to(base).as_posix()
-        instruction_value = instructions.get(name, instructions.get(leaf.name, {}))
-        task_instructions = instruction_value if isinstance(instruction_value, dict) else {}
+        resolved_instruction = _resolve_lmeb_instruction(name, instructions)
+        task_instructions = {"instruction": resolved_instruction} if resolved_instruction else {}
         task = EvaluationTask(
             name=name,
             benchmark="lmeb",
             split="test",
-            corpus=_load_corpus(corpus_path, ("_id", "id", "docid", "doc_id")),
+            corpus=corpus,
             queries={query_id: queries[query_id] for query_id in sorted(kept)},
             qrels={query_id: filtered_qrels[query_id] for query_id in sorted(kept)},
             candidates={query_id: candidates[query_id] for query_id in sorted(kept)},

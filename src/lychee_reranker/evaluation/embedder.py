@@ -22,11 +22,28 @@ class DenseEmbedder:
         max_length: int = 512,
         trust_remote_code: bool = False,
     ) -> None:
+        if not isinstance(model_name_or_path, str) or not model_name_or_path:
+            raise ValueError("model_name_or_path must be a non-empty string")
+        if batch_size <= 0 or max_length <= 0:
+            raise ValueError("batch_size and max_length must be positive")
         self.model_name_or_path = model_name_or_path
         self.revision = revision
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        dtype_name = dtype or ("bfloat16" if self.device.type == "cuda" else "float32")
-        self.dtype = {"bfloat16": torch.bfloat16, "float32": torch.float32}[dtype_name]
+        if self.device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA was requested, but no CUDA device is available")
+        if dtype is not None and not isinstance(dtype, str):
+            raise TypeError("dtype must be a string or None")
+        dtype_name = (dtype or ("bfloat16" if self.device.type == "cuda" else "float32")).lower()
+        self.dtype = {
+            "bfloat16": torch.bfloat16,
+            "bf16": torch.bfloat16,
+            "float16": torch.float16,
+            "fp16": torch.float16,
+            "float32": torch.float32,
+            "fp32": torch.float32,
+        }.get(dtype_name.removeprefix("torch."))
+        if self.dtype is None:
+            raise ValueError(f"unsupported dtype: {dtype!r}")
         self.batch_size = batch_size
         self.max_length = max_length
         common = {"revision": revision, "trust_remote_code": trust_remote_code}
@@ -43,6 +60,10 @@ class DenseEmbedder:
 
     @torch.inference_mode()
     def encode(self, texts: Sequence[str]) -> np.ndarray:
+        if isinstance(texts, (str, bytes)):
+            raise TypeError("texts must be a sequence of strings")
+        if any(not isinstance(text, str) for text in texts):
+            raise TypeError("texts must be a sequence of strings")
         batches: List[np.ndarray] = []
         for start in range(0, len(texts), self.batch_size):
             encoded = self.tokenizer(
@@ -53,9 +74,10 @@ class DenseEmbedder:
                 return_tensors="pt",
             ).to(self.device)
             outputs = self.model(**encoded, return_dict=True)
-            batches.append(
-                self._pool(outputs.last_hidden_state, encoded["attention_mask"]).cpu().numpy()
-            )
+            pooled = self._pool(outputs.last_hidden_state, encoded["attention_mask"])
+            if not torch.isfinite(pooled).all():
+                raise RuntimeError("embedder produced non-finite embeddings")
+            batches.append(pooled.cpu().numpy())
         if not batches:
             hidden_size = int(getattr(self.model.config, "hidden_size", 0))
             return np.empty((0, hidden_size), dtype=np.float32)
