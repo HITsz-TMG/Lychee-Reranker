@@ -360,7 +360,10 @@ def staged_output(destination: str | Path) -> Iterator[Path]:
     """Stage a new directory and publish it without replacing an existing one."""
 
     destination = Path(destination)
-    if destination.exists():
+    # ``Path.exists()`` is false for a dangling symlink.  Treat every
+    # directory entry as occupied so a failed or malicious output path can
+    # never be replaced during the final rename.
+    if os.path.lexists(destination):
         raise FileExistsError(f"refusing to overwrite output directory: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     lock = destination.with_name(f".{destination.name}.lock")
@@ -371,7 +374,7 @@ def staged_output(destination: str | Path) -> Iterator[Path]:
             f"output directory is already being created: {destination}"
         ) from error
     try:
-        if destination.exists():
+        if os.path.lexists(destination):
             raise FileExistsError(f"refusing to overwrite output directory: {destination}")
         with tempfile.TemporaryDirectory(
             prefix=f".{destination.name}.", dir=destination.parent
@@ -379,7 +382,7 @@ def staged_output(destination: str | Path) -> Iterator[Path]:
             temporary = Path(root) / "model"
             temporary.mkdir()
             yield temporary
-            if destination.exists():
+            if os.path.lexists(destination):
                 raise FileExistsError(f"refusing to overwrite output directory: {destination}")
             # All compliant writers hold the lock.  The preflight checks and
             # this final existence check prevent ordinary races without ever

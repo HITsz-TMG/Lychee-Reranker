@@ -62,6 +62,17 @@ class SoupTests(unittest.TestCase):
             self.assertEqual(len(set(index["weight_map"].values())), 2)
 
     @unittest.skipIf(safe_open is None, "safetensors is not installed")
+    def test_rejects_mixed_floating_dtype(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = self._model(root, "a", torch.tensor([1.0], dtype=torch.float32), torch.tensor([1]))
+            second = self._model(root, "b", torch.tensor([2.0], dtype=torch.float16), torch.tensor([1]))
+            with self.assertRaisesRegex(ValueError, "dtype/shape"):
+                soup_models([first, second], [0.5, 0.5], root / "out")
+            self.assertFalse((root / "out").exists())
+            self.assertFalse((root / ".out.lock").exists())
+
+    @unittest.skipIf(safe_open is None, "safetensors is not installed")
     def test_accepts_indexed_safetensors_inputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -88,6 +99,38 @@ class SoupTests(unittest.TestCase):
                 )
             output = soup_models([first, second], [0.5, 0.5], root / "out")
             self.assertTrue((output / "model.safetensors").is_file())
+
+    @unittest.skipIf(safe_open is None, "safetensors is not installed")
+    def test_rejects_missing_or_unreferenced_input_shards(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = self._model(root, "a", torch.tensor([1.0]), torch.tensor([1]))
+            second = self._model(root, "b", torch.tensor([3.0]), torch.tensor([1]))
+            for path in (first, second):
+                tensors = load_file(path / "model.safetensors")
+                (path / "model.safetensors").unlink()
+                save_file({"float": tensors["float"]}, path / "model-00001-of-00002.safetensors")
+                save_file({"integer": tensors["integer"]}, path / "model-00002-of-00002.safetensors")
+                (path / "model.safetensors.index.json").write_text(
+                    json.dumps(
+                        {
+                            "metadata": {"total_size": 12},
+                            "weight_map": {
+                                "float": "model-00001-of-00002.safetensors",
+                                "integer": "model-00002-of-00002.safetensors",
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            (second / "model-00002-of-00002.safetensors").unlink()
+            with self.assertRaises(FileNotFoundError):
+                soup_models([first, second], [0.5, 0.5], root / "missing")
+
+            save_file({"integer": torch.tensor([1])}, second / "model-00002-of-00002.safetensors")
+            save_file({"unused": torch.tensor([0])}, first / "unused.safetensors")
+            with self.assertRaisesRegex(ValueError, "unreferenced"):
+                soup_models([first, second], [0.5, 0.5], root / "extra")
 
     @unittest.skipIf(safe_open is None, "safetensors is not installed")
     def test_rejects_duplicate_models_and_invalid_weights(self):
@@ -128,6 +171,27 @@ class SoupTests(unittest.TestCase):
             (second / "generation_config.json").write_text("{}", encoding="utf-8")
             with self.assertRaisesRegex(FileNotFoundError, "tokenizer payload"):
                 soup_models([first, second], [0.5, 0.5], root / "missing-payload-out")
+
+    @unittest.skipIf(safe_open is None, "safetensors is not installed")
+    def test_preserves_tokenizer_metadata_and_rejects_dangling_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = self._model(root, "a", torch.tensor([1.0]), torch.tensor([1]))
+            second = self._model(root, "b", torch.tensor([3.0]), torch.tensor([1]))
+            for path in (first, second):
+                (path / "tokenizer_config.json").write_text('{"model_max_length": 8}', encoding="utf-8")
+                (path / "special_tokens_map.json").write_text('{"pad_token": "<pad>"}', encoding="utf-8")
+                (path / "tokenizer.py").write_text("# synthetic tokenizer code\n", encoding="utf-8")
+
+            output = soup_models([first, second], [0.5, 0.5], root / "out")
+            for name in ("tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "tokenizer.py"):
+                self.assertEqual((output / name).read_bytes(), (first / name).read_bytes())
+
+            dangling = root / "dangling"
+            dangling.symlink_to(root / "does-not-exist", target_is_directory=True)
+            with self.assertRaises(FileExistsError):
+                soup_models([first, second], [0.5, 0.5], dangling)
+            self.assertTrue(dangling.is_symlink())
 
     @unittest.skipIf(safe_open is None, "safetensors is not installed")
     def test_rejects_nonfinite_tensor_without_publishing(self):
