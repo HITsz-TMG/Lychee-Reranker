@@ -17,8 +17,10 @@ class StubEncoder(nn.Module):
     def __init__(self, embedding):
         super().__init__()
         self.embedding = embedding
+        self.calls = 0
 
     def forward(self, input_ids, attention_mask, return_dict=True):
+        self.calls += 1
         return BaseModelOutput(last_hidden_state=self.embedding(input_ids))
 
 
@@ -55,34 +57,65 @@ class ModelMathTests(unittest.TestCase):
 
     def test_sft_labels_first_passage_positive(self):
         logits = torch.tensor([[0.0, 2.0], [2.0, 0.0], [0.0, 1.0], [1.0, 0.0]])
-        expected = F.cross_entropy(logits, torch.tensor([1, 0, 1, 0]))
+        margins = logits[:, 1] - logits[:, 0]
+        expected = F.binary_cross_entropy_with_logits(
+            margins, torch.tensor([1.0, 0.0, 1.0, 0.0])
+        )
         self.assertTrue(torch.allclose(sft_loss(logits, 2), expected))
 
-    def test_kd_zero_when_logits_match(self):
+    def test_sft_uses_actual_query_group_count(self):
+        logits = torch.zeros(6, 2)
+        expected = F.binary_cross_entropy_with_logits(
+            logits[:, 1] - logits[:, 0], torch.tensor([1.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+        )
+        self.assertTrue(
+            torch.allclose(
+                sft_loss(logits, train_group_size=3, num_query_groups=2), expected
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "query groups"):
+            sft_loss(logits, train_group_size=3, num_query_groups=1)
+
+    def test_sft_casts_bfloat16_margin_before_bce(self):
+        logits = torch.tensor([[0.0, 2.0], [2.0, 0.0]], dtype=torch.bfloat16)
+        expected = F.binary_cross_entropy_with_logits(
+            logits.float()[:, 1] - logits.float()[:, 0], torch.tensor([1.0, 0.0])
+        )
+        self.assertTrue(torch.allclose(sft_loss(logits, train_group_size=2), expected))
+
+    def test_kd_is_literal_soft_label_bce(self):
         logits = torch.tensor([[0.0, 2.0], [1.0, -1.0]], requires_grad=True)
         loss = kd_loss(logits, torch.tensor([2.0, -2.0]))
-        self.assertLess(abs(loss.item()), 1e-6)
+        expected = F.binary_cross_entropy_with_logits(
+            logits[:, 1] - logits[:, 0], torch.sigmoid(torch.tensor([2.0, -2.0]))
+        )
+        self.assertTrue(torch.allclose(loss, expected))
         loss.backward()
         self.assertTrue(torch.isfinite(logits.grad).all())
 
     def test_training_wrapper_forward_backward(self):
+        base = StubSeq2Seq()
         wrapper = LycheeRerankerTrainingModel(
-            StubSeq2Seq(),
+            base,
             StubTokenizer(),
-            train_batch_size=1,
-            chunk_sizes=(2,),
-            chunk_loss_weights=(1.0,),
+            train_group_size=2,
+            chunk_sizes=(2, 8),
+            chunk_loss_weights=(1.0, 1.0),
         )
         output = wrapper(
-            encoder_input_ids=torch.tensor([[1, 2, 0], [3, 4, 0]]),
-            encoder_attention_mask=torch.tensor([[1, 1, 0], [1, 1, 0]]),
-            decoder_input_ids=torch.tensor([[1, 2], [1, 2]]),
-            decoder_attention_mask=torch.tensor([[1, 1], [1, 1]]),
+            encoder_input_ids=torch.tensor([[1, 2, 0], [3, 4, 0], [5, 6, 0], [1, 3, 0]]),
+            encoder_attention_mask=torch.tensor(
+                [[1, 1, 0], [1, 1, 0], [1, 1, 0], [1, 1, 0]]
+            ),
+            decoder_input_ids=torch.tensor([[1, 2], [1, 2], [1, 2], [1, 2]]),
+            decoder_attention_mask=torch.tensor([[1, 1], [1, 1], [1, 1], [1, 1]]),
+            num_query_groups=torch.tensor(2),
         )
         self.assertTrue(torch.isfinite(output.loss))
-        self.assertEqual(tuple(output.logits.shape), (2,))
+        self.assertEqual(tuple(output.logits.shape), (4,))
+        self.assertEqual(base.encoder.calls, 1)
         output.loss.backward()
-        self.assertIsNotNone(wrapper.model.projection.weight.grad)
+        self.assertIsNotNone(base.projection.weight.grad)
 
 
 if __name__ == "__main__":

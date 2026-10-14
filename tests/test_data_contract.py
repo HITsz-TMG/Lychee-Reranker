@@ -4,7 +4,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lychee_reranker.train.data import discover_data_files, load_hf_dataset, validate_record
+import torch
+
+from lychee_reranker.train.data import (
+    LycheeTrainCollator,
+    discover_data_files,
+    load_hf_dataset,
+    validate_dataset_records,
+    validate_record,
+)
 
 
 VALID = {
@@ -18,6 +26,39 @@ VALID = {
 
 
 class DataContractTests(unittest.TestCase):
+    def test_dataset_rows_are_validated_before_training(self):
+        self.assertEqual(validate_dataset_records([VALID], knowledge_distillation=True), 1)
+        with self.assertRaisesRegex(ValueError, "missing fields"):
+            validate_dataset_records([{"query": "q"}], knowledge_distillation=False)
+
+    def test_collator_exposes_actual_query_group_count(self):
+        class PadTokenizer:
+            pad_token_id = 0
+
+            def pad(self, rows, **kwargs):
+                width = max(len(row["input_ids"]) for row in rows)
+                ids = [row["input_ids"] + [0] * (width - len(row["input_ids"])) for row in rows]
+                masks = [
+                    row["attention_mask"] + [0] * (width - len(row["attention_mask"]))
+                    for row in rows
+                ]
+                return {
+                    "input_ids": torch.tensor(ids),
+                    "attention_mask": torch.tensor(masks),
+                }
+
+        pair = {
+            "encoder_input_ids": [1, 2],
+            "encoder_attention_mask": [1, 1],
+            "decoder_input_ids": [3],
+            "decoder_attention_mask": [1],
+        }
+        batch = LycheeTrainCollator(PadTokenizer())(
+            [([pair, pair], [2.0, -1.0]), ([pair, pair], [1.0, -2.0])]
+        )
+        self.assertEqual(batch["num_query_groups"].item(), 2)
+        self.assertEqual(tuple(batch["teacher_scores"].shape), (4,))
+
     def test_validation_and_multiplicity(self):
         self.assertEqual(validate_record(VALID, knowledge_distillation=True)["neg"], ["n1", "n2"])
         with self.assertRaisesRegex(ValueError, "non-empty"):

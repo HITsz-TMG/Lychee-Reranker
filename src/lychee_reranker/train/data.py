@@ -7,7 +7,7 @@ import os
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 from torch.utils.data import Dataset
@@ -99,6 +99,27 @@ def validate_record(
         result["pos_scores"] = _score_list(record["pos_scores"], "pos_scores", len(pos), location)
         result["neg_scores"] = _score_list(record["neg_scores"], "neg_scores", len(neg), location)
     return result
+
+
+def validate_dataset_records(
+    records: Iterable[Mapping[str, Any]], *, knowledge_distillation: bool
+) -> int:
+    """Validate every loaded row before tokenizer/model construction.
+
+    The training launcher calls this immediately after loading the shards so a
+    malformed row or missing teacher field cannot fail after a model download
+    or after a distributed job has started.
+    """
+    count = 0
+    for count, record in enumerate(records, start=1):
+        validate_record(
+            record,
+            knowledge_distillation=knowledge_distillation,
+            location=f"record[{count - 1}]",
+        )
+    if count == 0:
+        raise ValueError("training data contains no records")
+    return count
 
 
 def load_hf_dataset(files: Sequence[Path]):
@@ -207,9 +228,21 @@ class LycheeTrainCollator:
     pad_to_multiple_of: Optional[int] = 8
 
     def __call__(self, features: Sequence[Tuple[List[Dict[str, Any]], Optional[List[float]]]]):
+        if not features:
+            raise ValueError("cannot collate an empty batch")
         teacher_groups = [feature[1] for feature in features]
+        has_teacher = [group is not None for group in teacher_groups]
+        if any(value != has_teacher[0] for value in has_teacher[1:]):
+            raise ValueError("a batch cannot mix SFT rows and distillation rows")
+        group_sizes = [len(group) for group, _ in features]
+        if any(size < 2 for size in group_sizes):
+            raise ValueError("each query must contain one positive and at least one negative")
+        if len(set(group_sizes)) != 1:
+            raise ValueError("all query groups in a batch must have the same size")
         teacher_scores = None
-        if teacher_groups and teacher_groups[0] is not None:
+        if has_teacher[0]:
+            if any(len(group) != group_sizes[index] for index, group in enumerate(teacher_groups)):
+                raise ValueError("teacher score groups must match their query group size")
             teacher_scores = torch.tensor(
                 [score for group in teacher_groups for score in group], dtype=torch.float32
             )
@@ -245,4 +278,7 @@ class LycheeTrainCollator:
             "decoder_input_ids": decoder["input_ids"],
             "decoder_attention_mask": decoder["attention_mask"],
             "teacher_scores": teacher_scores,
+            # Trainer forwards this scalar to the wrapper; the wrapper checks
+            # it against the flattened pair count for variable final batches.
+            "num_query_groups": torch.tensor(len(features), dtype=torch.long),
         }

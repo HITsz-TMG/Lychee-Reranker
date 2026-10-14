@@ -16,6 +16,11 @@ distillation:
 model_soup:
   weights: [0.5, 0.5]
   output: outputs/nano/release2
+training_contract:
+  world_size: 32
+  global_query_batch_size: 128
+  train_group_size: 16
+  mep_ratios: [2, 8, 32, 128]
 provenance:
   bitwise_reproduction_claimed: false
   note: The canonical Nano r96 KD launcher was absent; this branch is reconstructed from final adapter metadata and the shared KD recipe.

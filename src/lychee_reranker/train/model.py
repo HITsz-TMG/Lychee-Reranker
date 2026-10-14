@@ -35,17 +35,76 @@ def mean_pool_chunks(
     return pooled, pooled_mask
 
 
-def sft_loss(yes_no_logits: torch.Tensor, train_batch_size: int) -> torch.Tensor:
+def _group_size_for_pairs(
+    pair_count: int,
+    *,
+    train_group_size: Optional[int],
+    train_batch_size: Optional[int],
+    num_query_groups: Optional[int] = None,
+) -> int:
+    """Resolve the query-group shape without assuming a fixed device batch.
+
+    ``train_batch_size`` is retained as a compatibility argument for callers of
+    the first extraction.  New training code supplies the fixed number of
+    passages per query (``train_group_size``) and infers the actual query count
+    from the flattened batch.
+    """
+    if pair_count <= 0:
+        raise ValueError("the flattened batch must contain at least one pair")
+    if train_group_size is not None:
+        group_size = int(train_group_size)
+        if group_size < 2:
+            raise ValueError("train_group_size must be at least 2")
+        if pair_count % group_size:
+            raise ValueError("pair count must be divisible by train_group_size")
+        actual_groups = pair_count // group_size
+    elif train_batch_size is not None:
+        batch_size = int(train_batch_size)
+        if batch_size <= 0 or pair_count % batch_size:
+            raise ValueError("pair count must be divisible by train_batch_size")
+        group_size = pair_count // batch_size
+        if group_size < 2:
+            raise ValueError("each query must contain at least one negative passage")
+        actual_groups = batch_size
+    else:
+        raise ValueError("supply train_group_size when computing the training loss")
+    if num_query_groups is not None and int(num_query_groups) != actual_groups:
+        raise ValueError(
+            f"collator reported {int(num_query_groups)} query groups, "
+            f"but the flattened batch contains {actual_groups}"
+        )
+    return group_size
+
+
+def sft_loss(
+    yes_no_logits: torch.Tensor,
+    train_batch_size: Optional[int] = None,
+    *,
+    train_group_size: Optional[int] = None,
+    num_query_groups: Optional[int] = None,
+) -> torch.Tensor:
+    """Compute the release SFT objective as binary BCE on yes-minus-no logits.
+
+    Every flattened query group has its first passage marked positive and all
+    remaining passages marked negative.  The explicit group size keeps the
+    objective correct when the last dataloader batch is smaller than the
+    configured per-device batch.
+    """
     if yes_no_logits.ndim != 2 or yes_no_logits.shape[1] != 2:
         raise ValueError("yes_no_logits must have shape [pairs, 2] in [no, yes] order")
-    if yes_no_logits.shape[0] % train_batch_size:
-        raise ValueError("pair count must be divisible by train_batch_size")
-    group_size = yes_no_logits.shape[0] // train_batch_size
-    labels = torch.zeros(
-        (train_batch_size, group_size), dtype=torch.long, device=yes_no_logits.device
+    group_size = _group_size_for_pairs(
+        yes_no_logits.shape[0],
+        train_group_size=train_group_size,
+        train_batch_size=train_batch_size,
+        num_query_groups=num_query_groups,
     )
-    labels[:, 0] = 1
-    return F.cross_entropy(yes_no_logits.view(-1, 2), labels.view(-1))
+    logits = yes_no_logits.float()
+    labels = torch.zeros(
+        yes_no_logits.shape[0], dtype=logits.dtype, device=yes_no_logits.device
+    )
+    labels[::group_size] = 1.0
+    student_margin = logits[:, 1] - logits[:, 0]
+    return F.binary_cross_entropy_with_logits(student_margin, labels)
 
 
 def kd_loss(
@@ -53,21 +112,20 @@ def kd_loss(
 ) -> torch.Tensor:
     if temperature <= 0:
         raise ValueError("temperature must be positive")
-    student = (yes_no_logits[:, 1] - yes_no_logits[:, 0]).float().reshape(-1)
+    logits = yes_no_logits.float()
+    student = (logits[:, 1] - logits[:, 0]).reshape(-1)
     teacher = torch.as_tensor(teacher_scores, device=student.device, dtype=torch.float32).reshape(
         -1
     )
     if student.shape != teacher.shape:
         raise ValueError(f"student shape {student.shape} does not match teacher {teacher.shape}")
     teacher_probability = torch.sigmoid(teacher.detach() / temperature)
-    cross_entropy = F.binary_cross_entropy_with_logits(
-        student / temperature, teacher_probability, reduction="none"
-    )
-    teacher_entropy = -(
-        torch.xlogy(teacher_probability, teacher_probability)
-        + torch.xlogy(1.0 - teacher_probability, 1.0 - teacher_probability)
-    )
-    return (cross_entropy - teacher_entropy).mean() * temperature**2
+    # Appendix D Eq. (10) is the literal soft-label BCE.  Do not subtract the
+    # teacher entropy: that produces the KL-equivalent scalar and changes the
+    # reported training objective even though its student gradient matches.
+    return F.binary_cross_entropy_with_logits(
+        student / temperature, teacher_probability
+    ) * temperature**2
 
 
 class LycheeRerankerTrainingModel(nn.Module):
@@ -78,7 +136,8 @@ class LycheeRerankerTrainingModel(nn.Module):
         model,
         tokenizer,
         *,
-        train_batch_size: int,
+        train_group_size: Optional[int] = None,
+        train_batch_size: Optional[int] = None,
         chunk_sizes: Sequence[int] = (2, 8, 32, 128),
         chunk_loss_weights: Sequence[float] = (1.0, 1.0, 1.0, 1.0),
         knowledge_distillation: bool = False,
@@ -95,7 +154,10 @@ class LycheeRerankerTrainingModel(nn.Module):
             raise ValueError("at least one chunk weight must be positive")
         self.model = model
         self.tokenizer = tokenizer
-        self.train_batch_size = train_batch_size
+        if train_group_size is None and train_batch_size is None:
+            raise ValueError("train_group_size is required for training")
+        self.train_group_size = int(train_group_size) if train_group_size is not None else None
+        self.train_batch_size = int(train_batch_size) if train_batch_size is not None else None
         self.chunk_sizes = tuple(int(size) for size in chunk_sizes)
         self.chunk_loss_weights = tuple(float(weight) for weight in chunk_loss_weights)
         self.knowledge_distillation = knowledge_distillation
@@ -149,6 +211,7 @@ class LycheeRerankerTrainingModel(nn.Module):
         decoder_input_ids: torch.Tensor,
         decoder_attention_mask: torch.Tensor,
         teacher_scores: Optional[torch.Tensor] = None,
+        num_query_groups: Optional[torch.Tensor | int] = None,
     ) -> RerankerOutput:
         encoded = self._encoder()(
             input_ids=encoder_input_ids,
@@ -172,7 +235,17 @@ class LycheeRerankerTrainingModel(nn.Module):
                         raise ValueError("teacher_scores are required for knowledge distillation")
                     losses.append(kd_loss(logits, teacher_scores, self.temperature))
                 else:
-                    losses.append(sft_loss(logits, self.train_batch_size))
+                    groups = None
+                    if num_query_groups is not None:
+                        groups = int(num_query_groups.item()) if torch.is_tensor(num_query_groups) else int(num_query_groups)
+                    losses.append(
+                        sft_loss(
+                            logits,
+                            self.train_batch_size,
+                            train_group_size=self.train_group_size,
+                            num_query_groups=groups,
+                        )
+                    )
         weights = torch.tensor(
             self.chunk_loss_weights, device=scores[0].device, dtype=scores[0].dtype
         )
@@ -185,7 +258,23 @@ class LycheeRerankerTrainingModel(nn.Module):
         return RerankerOutput(loss=loss, logits=merged_scores)
 
     def enable_input_require_grads(self) -> None:
-        self.model.enable_input_require_grads()
+        if hasattr(self.model, "enable_input_require_grads"):
+            self.model.enable_input_require_grads()
+
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None) -> None:
+        method = getattr(self.model, "gradient_checkpointing_enable", None)
+        if method is None:
+            raise RuntimeError("the wrapped model does not support gradient checkpointing")
+        if gradient_checkpointing_kwargs is None:
+            method()
+        else:
+            method(gradient_checkpointing_kwargs=gradient_checkpointing_kwargs)
+        self.enable_input_require_grads()
+
+    def gradient_checkpointing_disable(self) -> None:
+        method = getattr(self.model, "gradient_checkpointing_disable", None)
+        if method is not None:
+            method()
 
     def save_pretrained(self, output_dir: str, **kwargs) -> None:
         self.model.save_pretrained(output_dir, **kwargs)

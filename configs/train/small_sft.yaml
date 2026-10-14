@@ -24,16 +24,20 @@ training:
   output_dir: outputs/small/sft-adapter
   num_train_epochs: 1
   learning_rate: 0.0002
+  lr_scheduler_type: cosine
+  optim: adamw_torch
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  max_grad_norm: 1.0
   per_device_train_batch_size: 2
   gradient_accumulation_steps: 2
   warmup_ratio: 0.1
   weight_decay: 0.00001
   bf16: true
   gradient_checkpointing: true
+  gradient_checkpointing_kwargs: {use_reentrant: false}
+  ddp_find_unused_parameters: false
   dataloader_drop_last: true
   logging_steps: 1
   save_steps: 2680
-  save_safetensors: true
   report_to: none
-  overwrite_output_dir: true
-  deepspeed: configs/deepspeed/stage0.json
