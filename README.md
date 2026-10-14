@@ -167,7 +167,8 @@ For comparison with an earlier standalone implementation, additionally pass
 `--reference-implementation /path/to/kalm_reranker.py` and
 `--reference-model /path/to/released-Nano-checkpoint`. GPU environment exports
 are included in the shell launcher. Set `PYTHON=/path/to/python` to select an
-environment. Generated logs, caches and weights stay in the output directory.
+environment. Generated training data, logs, dataset caches and weights stay in
+the output directory.
 
 ## License and provenance
 

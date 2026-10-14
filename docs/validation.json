@@ -1,0 +1,141 @@
+{
+  "scope": "synthetic execution smoke; not benchmark quality or full training",
+  "release_source_sha256": "bda2326344677d5a7391c6b274bba7f778afbaabb4ebbfc1075d61e9256ffafe",
+  "base_model_label": "t5gemma-2-270m-270m",
+  "base_config_sha256": "dc0abad09fc94797f7bd091b63b8d33ff6a70daf803683287acba57d8844d01c",
+  "embedder_model_label": "KaLM-embedding-multilingual-mini-instruct-v2_5",
+  "embedder_config_sha256": "6471bf1845967beab7a667dbff117f0ab60052941a5916375dff954dd87308e3",
+  "gpu": "CUDA-capable NVIDIA GPU with BF16 support",
+  "versions": {
+    "torch": "2.8.0+cu129",
+    "transformers": "5.3.0",
+    "peft": "0.18.1",
+    "accelerate": "1.13.0",
+    "datasets": "4.8.4",
+    "safetensors": "0.7.0"
+  },
+  "sft": {
+    "optimizer_steps": 2,
+    "losses": [
+      1.1523988246917725,
+      1.1998039484024048
+    ],
+    "gradient_norms": [
+      45.85226058959961,
+      44.37317657470703
+    ],
+    "max_lora_B_norm": 0.08520201593637466,
+    "resume_exact_adapter_sha256_match": true,
+    "merge_parity": {
+      "pairs": 6,
+      "max_abs_diff": 1.0856930909852736e-09,
+      "tolerance": 0.01
+    }
+  },
+  "kd-r64": {
+    "optimizer_steps": 2,
+    "losses": [
+      27.85640525817871,
+      27.73516082763672
+    ],
+    "gradient_norms": [
+      88.8786849975586,
+      88.89348602294922
+    ],
+    "max_lora_B_norm": 0.06997940689325333,
+    "merge_parity": {
+      "pairs": 6,
+      "max_abs_diff": 0.0017720903269946575,
+      "tolerance": 0.01
+    }
+  },
+  "kd-r96": {
+    "optimizer_steps": 2,
+    "losses": [
+      27.85640525817871,
+      27.73516082763672
+    ],
+    "gradient_norms": [
+      111.00334930419922,
+      111.33329010009766
+    ],
+    "max_lora_B_norm": 0.08562804758548737,
+    "merge_parity": {
+      "pairs": 6,
+      "max_abs_diff": 0.008311480283737183,
+      "tolerance": 0.01
+    }
+  },
+  "soup": {
+    "tensor_count": 911,
+    "equal_weight_exact": true
+  },
+  "inference": {
+    "ratios": [
+      "1",
+      "2",
+      "4",
+      "8",
+      "32",
+      "128"
+    ],
+    "finite_pairs_per_ratio": 6,
+    "batch_single_max_abs_diff": 0.0017449837177991867
+  },
+  "evaluation": {
+    "beir": {
+      "leaves": 1,
+      "candidate_reuse_equal": true
+    },
+    "miracl": {
+      "leaves": 1,
+      "candidate_reuse_equal": true
+    },
+    "lmeb": {
+      "leaves": 2,
+      "candidate_reuse_equal": true
+    }
+  },
+  "reference_parity": {
+    "model_label": "released-Nano-checkpoint",
+    "reference_sha256": "741861b6ae62fdb9b386bdde5cfa0da76bc23c551cf75ed9bcf63de31389001f",
+    "pairs": 6,
+    "max_abs_diff_by_ratio": {
+      "1": 0.0,
+      "4": 0.0,
+      "128": 0.0
+    },
+    "tolerance": 1e-05
+  },
+  "embedder_reference_parity": {
+    "texts": 4,
+    "dimensions": 896,
+    "max_abs_diff": 6.51925802230835e-08,
+    "tolerance": 1e-05,
+    "reference_sha256": "17d916558962831b1054cd17a5941740a918112f1e76028d0387787ce8a6360b"
+  },
+  "elapsed_seconds": 679.84,
+  "passed": true,
+  "validation_date": "2026-10-14",
+  "cpu_validation": {
+    "passed": 61,
+    "failed": 0,
+    "skipped": 0,
+    "two_rank_t5gemma2_resume_exact": true
+  },
+  "static_validation": {
+    "training_recipes": 9,
+    "workflow_manifests": 3,
+    "cli_entrypoints": 4,
+    "ruff": true,
+    "shell_syntax": true
+  },
+  "packaging_validation": {
+    "wheel_build": true,
+    "sdist_build": true,
+    "wheel_source_parity": true,
+    "isolated_wheel_import": true,
+    "installed_cli_entrypoints": 4,
+    "repository_and_distribution_privacy_scan": true
+  }
+}
