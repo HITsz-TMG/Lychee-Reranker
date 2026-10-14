@@ -121,6 +121,11 @@ class SoupTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "tokenizer"):
                 soup_models([first, second], [0.5, 0.5], root / "tokenizer-out")
 
+            (second / "tokenizer.json").unlink()
+            (second / "generation_config.json").write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(FileNotFoundError, "tokenizer payload"):
+                soup_models([first, second], [0.5, 0.5], root / "missing-payload-out")
+
     @unittest.skipIf(safe_open is None, "safetensors is not installed")
     def test_rejects_nonfinite_tensor_without_publishing(self):
         with tempfile.TemporaryDirectory() as tmp:

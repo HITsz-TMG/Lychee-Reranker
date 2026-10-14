@@ -73,6 +73,17 @@ def _load_seq2seq_config(base_model: str | Path, common: dict[str, Any]):
     return config
 
 
+def _config_without_dtype(config: dict[str, Any]) -> dict[str, Any]:
+    comparable = dict(config)
+    # Loading with an explicit dtype is allowed to update this runtime hint in
+    # save_pretrained.  The tensor dtype itself is validated by the model save
+    # and reload parity test; it is intentionally excluded only from semantic
+    # config comparison.
+    comparable.pop("dtype", None)
+    comparable.pop("torch_dtype", None)
+    return comparable
+
+
 def merge_lora(
     base_model: str,
     adapter: str,
@@ -138,13 +149,15 @@ def merge_lora(
         # after the model save. This covers generation config, processor and
         # custom tokenizer/model code that save_pretrained may not emit.
         if local_base is not None:
-            copy_relevant_metadata(local_base, temporary)
+            copy_relevant_metadata(local_base, temporary, exclude_names={"config.json"})
 
         # Ensure the saved semantic config still describes the loaded base.
         # This catches an unexpected model implementation rewriting a config
         # during save before the destination can become visible.
         saved_config = semantic_config(temporary)
-        if local_base is not None and saved_config != semantic_config(local_base):
+        if local_base is not None and _config_without_dtype(saved_config) != _config_without_dtype(
+            semantic_config(local_base)
+        ):
             raise ValueError("merged output config differs from the loaded base model config")
 
         manifest = {

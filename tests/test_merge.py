@@ -79,6 +79,9 @@ class MergeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             base, adapter = self._base_and_adapter(root)
+            base_config = json.loads((base / "config.json").read_text(encoding="utf-8"))
+            base_config["dtype"] = "bfloat16"
+            (base / "config.json").write_text(json.dumps(base_config), encoding="utf-8")
             output = merge_lora(str(base), str(adapter), root / "merged", dtype="float32")
 
             expected = AutoModelForSeq2SeqLM.from_pretrained(base, dtype=torch.float32)
@@ -91,6 +94,8 @@ class MergeTests(unittest.TestCase):
 
             self.assertTrue((output / "tokenizer.json").is_file())
             self.assertTrue((output / "generation_config.json").is_file())
+            saved_config = json.loads((output / "config.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved_config["dtype"], "float32")
             manifest = json.loads((output / "merge_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["operation"], "merge_lora")
             self.assertEqual(manifest["model_type"], "t5")

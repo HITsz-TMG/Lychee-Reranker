@@ -61,6 +61,16 @@ TOKENIZER_PREFIXES = (
     "tokenizer",
     "vocab.",
 )
+TOKENIZER_PAYLOAD_EXACT_FILES = frozenset(
+    {
+        "spiece.model",
+        "tokenizer.json",
+        "tokenizer.model",
+        "vocab.json",
+        "vocab.txt",
+    }
+)
+TOKENIZER_PAYLOAD_PREFIXES = ("sentencepiece", "spiece.", "tokenizer.", "vocab.")
 
 # Safetensors dtype names and their storage width.  Unknown dtypes are
 # rejected instead of guessed so shard sizing and dtype parity remain exact.
@@ -151,9 +161,16 @@ def relevant_metadata_files(path: Path) -> tuple[Path, ...]:
 
 
 def tokenizer_fingerprint(path: Path) -> dict[str, str]:
+    metadata_files = relevant_metadata_files(path)
+    if not any(
+        candidate.name in TOKENIZER_PAYLOAD_EXACT_FILES
+        or any(candidate.name.startswith(prefix) for prefix in TOKENIZER_PAYLOAD_PREFIXES)
+        for candidate in metadata_files
+    ):
+        raise FileNotFoundError(f"no tokenizer payload found in {path}")
     files = {
         candidate.name: file_digest(candidate)
-        for candidate in relevant_metadata_files(path)
+        for candidate in metadata_files
         if candidate.name != "config.json" and candidate.suffix != ".py"
     }
     if not files:
@@ -164,21 +181,19 @@ def tokenizer_fingerprint(path: Path) -> dict[str, str]:
     files.update(
         {
             candidate.name: file_digest(candidate)
-            for candidate in relevant_metadata_files(path)
+            for candidate in metadata_files
             if candidate.name.endswith(".py")
         }
     )
-    if not any(
-        candidate.name != "config.json"
-        and not candidate.name.endswith(".py")
-        for candidate in relevant_metadata_files(path)
-    ):
-        raise FileNotFoundError(f"no tokenizer files found in {path}")
     return files
 
 
-def copy_relevant_metadata(source: Path, destination: Path) -> None:
+def copy_relevant_metadata(
+    source: Path, destination: Path, *, exclude_names: set[str] | frozenset[str] = frozenset()
+) -> None:
     for candidate in relevant_metadata_files(source):
+        if candidate.name in exclude_names:
+            continue
         shutil.copy2(candidate, destination / candidate.name)
 
 
