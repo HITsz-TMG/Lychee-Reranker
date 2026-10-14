@@ -5,3 +5,4 @@ recursive-include examples *.py *.sh
 recursive-include requirements *.txt
 recursive-include scripts *.py *.sh
 recursive-include tests *.py
+exclude docs/equivalence.json docs/equivalence.md

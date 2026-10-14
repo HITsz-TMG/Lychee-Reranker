@@ -142,11 +142,12 @@ integrity, LMEB filtering, aggregation and metrics. JSON metrics are on the
 CPU checks do not download models or datasets:
 
 ```bash
+python -m pip install pytrec-eval-terrier==0.5.10
 python -m pytest
 ruff check src tests scripts
 ruff format --check src tests scripts
 python -m build
-python scripts/check_release.py
+python scripts/check_release.py --history
 ```
 
 The GPU smoke test uses local models, synthetic text, and a **new** output
@@ -168,7 +169,9 @@ For comparison with an earlier standalone implementation, additionally pass
 `--reference-model /path/to/released-Nano-checkpoint`. GPU environment exports
 are included in the shell launcher. Set `PYTHON=/path/to/python` to select an
 environment. Generated training data, logs, dataset caches and weights stay in
-the output directory.
+the output directory by default. If the output filesystem does not support
+file locks, set `HF_DATASETS_CACHE=/path/to/local-cache` to put only the dataset
+cache on a local filesystem.
 
 ## License and provenance
 

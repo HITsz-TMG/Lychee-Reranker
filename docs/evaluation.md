@@ -16,6 +16,8 @@ The exported BEIR layout is:
 ```
 
 The standard BEIR `queries.jsonl` plus `qrels/test.tsv` layout is also supported.
+Archived exports with `test/test_queries.jsonl` and `test/test_qrels.jsonl`
+are accepted as a fallback; flat and standard files take priority.
 MSMARCO defaults to its development split through `splits: {msmarco: dev}`.
 If an older local export named those same development examples `test`, override
 that mapping explicitly; the loader cannot infer the identity of an aliased split.
@@ -27,6 +29,8 @@ MIRACL uses one directory per language, with `corpus.jsonl`,
 `dev_queries.jsonl` and `dev_qrels.jsonl`. The public configurations request
 all 18 languages. An incomplete requested task set must fail rather than
 silently produce an average over the available subset.
+German and Yoruba expose only `dev`; other supported languages expose `train`
+and `dev`, matching the original loader's available-split contract.
 
 Corpus rows contain `_id`, `text` and an optional `title`; query rows contain
 `_id` and `text`. JSONL qrels use `query-id`, `corpus-id` and `score`. TSV qrels
@@ -64,6 +68,9 @@ It does not implicitly include the other LMEB categories in the paper's score.
 ## Retrieval and scoring
 
 The first-stage model is KaLM-Embedding-V2.5 with normalized mean pooling.
+Pooling accumulates in FP32 even when model states are FP16/BF16. Inputs are
+batched by token length and then restored to their original order, as in the
+original FlagEmbedding encoder-only embedder.
 Its Qwen2 checkpoint declares bidirectional attention; the native loader
 preserves that behavior with an explicit bidirectional padding mask.
 Queries receive the task instruction; documents use their original text.
@@ -86,6 +93,17 @@ Unknown/missing query or document IDs and non-finite scores are errors.
 
 The primary metric is nDCG@10 with linear graded relevance gains, matching
 `trec_eval`/BEIR. Recall and reciprocal rank regard any positive relevance as
-relevant. JSON metrics are fractions; only Markdown display multiplies by 100.
+relevant. Optional `map@k` divides summed precisions by all positive qrels.
+For tied scores, nDCG/MAP/recall use descending document IDs, matching
+`pytrec_eval`; MRR preserves insertion order, matching the original custom
+MRR helper. Reranking and result serialization preserve candidate order within
+score ties, including when saved candidates are reused at a top-k cutoff. LMEB
+restricted retrieval uses the original NumPy `argsort` ordering.
+Global retrieval preserves FAISS's returned order. The optional NumPy fallback
+uses stable corpus order for ties; tied top-k boundaries can differ between
+backends. Use the same backend and saved candidates when comparing models.
+JSON metrics are fractions; only Markdown display multiplies by 100.
+JSON retains full floating-point precision; the original FlagEmbedding summary
+rounded metric averages to five decimal places.
 Macro averaging gives each paper task equal weight. The small GPU smoke
 fixtures test execution and candidate reuse, not published benchmark scores.

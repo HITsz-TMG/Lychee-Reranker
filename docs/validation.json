@@ -1,6 +1,6 @@
 {
   "scope": "synthetic execution smoke; not benchmark quality or full training",
-  "release_source_sha256": "bda2326344677d5a7391c6b274bba7f778afbaabb4ebbfc1075d61e9256ffafe",
+  "release_source_sha256": "8289d152b46b32da153571e789c87b799cf51f5063ef930a458fa33add14e624",
   "base_model_label": "t5gemma-2-270m-270m",
   "base_config_sha256": "dc0abad09fc94797f7bd091b63b8d33ff6a70daf803683287acba57d8844d01c",
   "embedder_model_label": "KaLM-embedding-multilingual-mini-instruct-v2_5",
@@ -108,20 +108,80 @@
     "tolerance": 1e-05
   },
   "embedder_reference_parity": {
-    "texts": 4,
+    "texts": 16,
     "dimensions": 896,
-    "max_abs_diff": 6.51925802230835e-08,
+    "max_abs_diff": 1.9371509552001953e-07,
     "tolerance": 1e-05,
-    "reference_sha256": "17d916558962831b1054cd17a5941740a918112f1e76028d0387787ce8a6360b"
+    "reference_sha256": "e74cad724e46a17015cd37b326f75ec064755f703aa7dce27185a83c789952e0"
   },
-  "elapsed_seconds": 679.84,
+  "elapsed_seconds": 825.8,
   "passed": true,
-  "validation_date": "2026-10-14",
+  "validation_date": "2026-10-15",
+  "publication_source_sha256": "e769df67ffb5d95d00bcc5a8f74d23760b05fee28c748e375cc04361816b8c0e",
+  "validation_sequence": {
+    "full_pipeline_git_revision": "c70e6449f60e96687881119b4c4e0c372105c350",
+    "full_pipeline_digest_matches_committed_snapshot": true,
+    "post_pipeline_runtime_changes": [
+      "src/lychee_reranker/evaluation/io.py"
+    ],
+    "post_pipeline_recipe_metadata_change": "Nano KD launcher provenance; no training setting changed",
+    "post_pipeline_regressions": 2,
+    "post_pipeline_cpu_and_gpu_evaluation_rerun": true,
+    "training_inference_and_checkpoint_code_unchanged_after_full_pipeline": true
+  },
+  "evaluation_followup": {
+    "scope": "evaluation rerun after score-tie serialization correction; existing smoke ModelSoup weights reused",
+    "release_source_sha256": "e769df67ffb5d95d00bcc5a8f74d23760b05fee28c748e375cc04361816b8c0e",
+    "release_component_sha256": {
+      "src/lychee_reranker/__init__.py": "f554509819f186a67ad1e6ff4cf155a7489652684e6d1b682eb4e9841053c68c",
+      "src/lychee_reranker/checkpoint/__init__.py": "b982fd9f7aaa5b50000baecd98e0239fdbaa859ec91a0c4da72a2db69a59f8a5",
+      "src/lychee_reranker/checkpoint/_common.py": "f286575de1e9d3d62341c171ff164e9cf2fc4419ef80a57be6cc34d55e0f9b9f",
+      "src/lychee_reranker/checkpoint/merge.py": "0689a1de6b4e5d1409139f3054bc339a09511893775607413b2d1a6602829625",
+      "src/lychee_reranker/checkpoint/soup.py": "4d84a87be8abbcc9f331dce1f697691ed06502d2acd11cc9b3ff366885a61ddb",
+      "src/lychee_reranker/evaluation/__init__.py": "5423253ec2da87df70203c2d91c3a7b7296b50d8d9761d12a5e0ac9088fd9dad",
+      "src/lychee_reranker/evaluation/benchmarks.py": "acf298c749bb3f725ac96ccc57c2e0c0dd2f2385aa58a9f05549d7066531e50a",
+      "src/lychee_reranker/evaluation/cli.py": "d3f62756209792e2e87653c50eeca981ec5df25affdb8c7c002a48ee7832da9b",
+      "src/lychee_reranker/evaluation/data.py": "5aa6262668909ad7fbb80f4c42c94959035d4408c3bb5a181a60c390744f7e95",
+      "src/lychee_reranker/evaluation/embedder.py": "39f5349b569dd15b039dda4da24e08d6c132f4f83e444350e63fc3dbb10dfcb4",
+      "src/lychee_reranker/evaluation/io.py": "084fd2a39a14ea16f634495882aef14f62aa6b6cb820271fab8c00395899fb4c",
+      "src/lychee_reranker/evaluation/metrics.py": "be6c900a8ef7acb5521f9412d8d2fcd34e8156755a5f1dc089bd3fc8d5f93691",
+      "src/lychee_reranker/evaluation/retrieval.py": "c2744b0040a47d31892b41f425fc33f38bb9f9510b36189ac0c09fdb68ae4883",
+      "src/lychee_reranker/inference.py": "63d868561181c4caccf00548f36843bc8ce7cd37432508fdf99c97a92f92eca7",
+      "src/lychee_reranker/prompts.py": "78b044cce63fbd50c4362d558c66b705e9a3667793b7bb4c0f52d85892500295",
+      "src/lychee_reranker/train/__init__.py": "7a5ebf42a5604d7e99aa7275190ffabd6098a26d057f475ce4edc71dc4cd9cc2",
+      "src/lychee_reranker/train/cli.py": "94a6c6a0cc35fed93aa8c3a5ab6b1bb6abee3bf95a5e8263732785d28ccd1c26",
+      "src/lychee_reranker/train/config.py": "c37eb69e663b5c9ad6987bdae8f5b53119801fde2947a5135f7aefebce4e33be",
+      "src/lychee_reranker/train/data.py": "a3d45bf648c8b665db0c7bd2b6595239aa92adef1a2d8952e2211564e89ee906",
+      "src/lychee_reranker/train/model.py": "5c9f072a3567ad529e35e47bedb3a6107542bcecce9c8d15f695dbcba091a23b",
+      "src/lychee_reranker/train/trainer.py": "c9fa97931d874ef63b6c86a0605d589a9ac1d4af14f49aef106283f02a4e99da"
+    },
+    "reranker_config_sha256": "75926d34f90b64a3119e62535211bcd2305e8ea0ae4339773cb20dc84c8991d4",
+    "evaluation": {
+      "beir": {
+        "leaves": 1,
+        "candidate_reuse_equal": true
+      },
+      "miracl": {
+        "leaves": 1,
+        "candidate_reuse_equal": true
+      },
+      "lmeb": {
+        "leaves": 2,
+        "candidate_reuse_equal": true
+      }
+    },
+    "elapsed_seconds": 230.9,
+    "passed": true
+  },
   "cpu_validation": {
-    "passed": 61,
-    "failed": 0,
+    "tests": 92,
+    "failures": 0,
+    "errors": 0,
     "skipped": 0,
-    "two_rank_t5gemma2_resume_exact": true
+    "duration_seconds": 134.121,
+    "passed": 92,
+    "two_rank_t5gemma2_resume_exact": true,
+    "release_source_sha256": "e769df67ffb5d95d00bcc5a8f74d23760b05fee28c748e375cc04361816b8c0e"
   },
   "static_validation": {
     "training_recipes": 9,

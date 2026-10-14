@@ -70,6 +70,9 @@ Use the same model, data, seed, world size and training settings on every rank.
 The default recipes use native PyTorch DDP; DeepSpeed/FSDP are outside the
 supported checkpoint path. `--print-config` shows the resolved configuration
 without loading a model. Do not reuse output directories for unrelated runs.
+The dataset cache needs working file locks. Set
+`HF_DATASETS_CACHE=/path/to/local-cache` when a shared output filesystem does not
+provide them; checkpoints can still use the shared output directory.
 
 ## Checkpoints
 

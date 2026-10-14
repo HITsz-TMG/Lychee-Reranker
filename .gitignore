@@ -29,3 +29,7 @@ models/
 *.key
 *.parquet
 smoke-output/
+
+# Local audit reports are not part of the published repository.
+/docs/equivalence.json
+/docs/equivalence.md

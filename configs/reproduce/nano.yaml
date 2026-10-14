@@ -27,5 +27,5 @@ training_contract:
   - 128
 provenance:
   bitwise_reproduction_claimed: false
-  note: The canonical Nano r96 KD launcher was absent; this branch is reconstructed
-    from final adapter metadata and the shared KD recipe.
+  note: Nano KD ranks 64/96 and alphas 32/48 match the original KD launchers and
+    the paper. This does not establish historical weight or training-data order identity.
