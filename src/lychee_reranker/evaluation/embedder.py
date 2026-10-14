@@ -51,6 +51,40 @@ class DenseEmbedder:
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, **common)
         self.model = AutoModel.from_pretrained(model_name_or_path, dtype=self.dtype, **common)
         self.model.to(self.device).eval()
+        # KaLM's public Qwen2 checkpoint is an encoder-style, bidirectional
+        # model even though native Transformers constructs Qwen2 attention
+        # modules with ``is_causal=True``.  A plain 2-D padding mask therefore
+        # takes the native causal path and silently changes its representations.
+        # Passing a prepared 4-D mask makes Transformers treat it as already
+        # materialized and preserves the checkpoint's non-causal contract.
+        self._use_bidirectional_mask = (
+            str(getattr(self.model.config, "model_type", "")).casefold() == "qwen2"
+            and getattr(self.model.config, "is_causal", True) is False
+        )
+
+    @staticmethod
+    def _bidirectional_attention_mask(
+        attention_mask: torch.Tensor, *, dtype: torch.dtype = torch.float32
+    ) -> torch.Tensor:
+        """Build an additive 4-D mask for a padded bidirectional sequence.
+
+        The mask blocks both padded keys and padded queries.  Valid tokens can
+        attend to every other valid token, including tokens to their right.
+        Native Qwen2 accepts this prepared mask without rebuilding a causal
+        mask, which is needed for KaLM's ``is_causal=False`` checkpoint.
+        """
+        if attention_mask.ndim != 2:
+            raise ValueError("attention_mask must have shape [batch, sequence]")
+        if not dtype.is_floating_point:
+            raise TypeError("bidirectional attention mask dtype must be floating point")
+        valid = attention_mask.to(torch.bool)
+        allowed = valid[:, None, :, None] & valid[:, None, None, :]
+        mask = torch.zeros(
+            (*allowed.shape[:1], 1, *allowed.shape[2:]),
+            dtype=dtype,
+            device=attention_mask.device,
+        )
+        return mask.masked_fill(~allowed, torch.finfo(dtype).min)
 
     @staticmethod
     def _pool(hidden: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -73,7 +107,13 @@ class DenseEmbedder:
                 max_length=self.max_length,
                 return_tensors="pt",
             ).to(self.device)
-            outputs = self.model(**encoded, return_dict=True)
+            model_inputs = dict(encoded)
+            if self._use_bidirectional_mask:
+                model_inputs["attention_mask"] = self._bidirectional_attention_mask(
+                    encoded["attention_mask"], dtype=self.dtype
+                )
+                model_inputs["use_cache"] = False
+            outputs = self.model(**model_inputs, return_dict=True)
             pooled = self._pool(outputs.last_hidden_state, encoded["attention_mask"])
             if not torch.isfinite(pooled).all():
                 raise RuntimeError("embedder produced non-finite embeddings")

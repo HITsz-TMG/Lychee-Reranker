@@ -6,7 +6,15 @@ from unittest.mock import patch
 
 import numpy as np
 
-from lychee_reranker.evaluation.cli import _aggregate_lmeb_groups, _aggregate_rows, parse_args, run
+from lychee_reranker.evaluation.cli import (
+    _aggregate_lmeb_groups,
+    _aggregate_rows,
+    _instruction,
+    parse_args,
+    run,
+)
+from lychee_reranker.evaluation.data import EvaluationTask
+from lychee_reranker.train.config import load_config
 
 
 def write_jsonl(path, rows):
@@ -38,6 +46,39 @@ class FakeReranker:
 
 
 class EvaluationPipelineTests(unittest.TestCase):
+    def test_beir_stage_prompts_match_source_maps(self):
+        task = EvaluationTask(
+            name="msmarco",
+            benchmark="beir",
+            split="dev",
+            corpus={},
+            queries={},
+            qrels={},
+        )
+        self.assertEqual(
+            _instruction(task, {}, stage="retrieve"),
+            "Given a web search query, retrieve relevant passages that answer the query.",
+        )
+        self.assertEqual(
+            _instruction(task, {}, stage="rerank"),
+            "Given a query, retrieve documents that answer the query.",
+        )
+        task.name = "cqadupstack/android"
+        self.assertEqual(
+            _instruction(task, {}, stage="retrieve"),
+            "Given a question, retrieve detailed question descriptions from Stackexchange "
+            "that are duplicates to the given question.",
+        )
+        self.assertEqual(
+            _instruction(task, {"instruction": "custom"}, stage="retrieve"), "custom"
+        )
+
+    def test_beir_config_uses_msmarco_dev_and_identical_id_contract(self):
+        config = load_config(Path(__file__).parents[1] / "configs" / "eval" / "beir.yaml")
+        self.assertEqual(config["split"], "test")
+        self.assertEqual(config["splits"], {"msmarco": "dev"})
+        self.assertIs(config["ignore_identical_ids"], True)
+
     def test_all_then_candidate_reuse(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

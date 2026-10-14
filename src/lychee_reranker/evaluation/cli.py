@@ -9,7 +9,14 @@ from typing import Any, Dict, List, Optional, Sequence
 from lychee_reranker.inference import LycheeReranker
 from lychee_reranker.train.config import load_config
 
-from .benchmarks import BEIR_V1_TASKS, DEFAULT_METRICS, LMEB_DIALOGUE_TASKS, MIRACL_LANGUAGES
+from .benchmarks import (
+    BEIR_RERANKER_INSTRUCTIONS,
+    BEIR_RETRIEVER_INSTRUCTIONS,
+    BEIR_V1_TASKS,
+    DEFAULT_METRICS,
+    LMEB_DIALOGUE_TASKS,
+    MIRACL_LANGUAGES,
+)
 from .data import EvaluationTask, load_beir, load_lmeb, load_miracl
 from .embedder import DenseEmbedder
 from .io import read_run, stable_digest, write_run, write_summary
@@ -44,13 +51,24 @@ def _tasks(config: Dict[str, Any]) -> List[EvaluationTask]:
     raise ValueError("benchmark must be one of: beir, miracl, lmeb")
 
 
-def _instruction(task: EvaluationTask, config: Dict[str, Any]) -> str:
+def _instruction(
+    task: EvaluationTask, config: Dict[str, Any], *, stage: str = "rerank"
+) -> str:
     explicit = config.get("instruction")
     if explicit is not None:
         return str(explicit)
     for key in ("instruction", "query", "query_instruction"):
         if key in task.instructions:
             return task.instructions[key]
+    if task.benchmark.casefold() == "beir":
+        dataset = task.name.split("/", maxsplit=1)[0].casefold()
+        instructions = (
+            BEIR_RETRIEVER_INSTRUCTIONS
+            if stage == "retrieve"
+            else BEIR_RERANKER_INSTRUCTIONS
+        )
+        if dataset in instructions:
+            return instructions[dataset]
     return "Given a query, retrieve documents that answer the query."
 
 
@@ -134,7 +152,8 @@ def run(
             query_ids = sorted(task.queries)
             document_ids = sorted(task.corpus)
             query_embeddings = embedder.encode_queries(
-                [task.queries[query_id] for query_id in query_ids], _instruction(task, config)
+                [task.queries[query_id] for query_id in query_ids],
+                _instruction(task, config, stage="retrieve"),
             )
             document_embeddings = embedder.encode_corpus(
                 [task.corpus[document_id] for document_id in document_ids]
@@ -146,6 +165,12 @@ def run(
                     query_ids,
                     document_ids,
                     top_k=top_k,
+                    ignore_identical_ids=bool(
+                        config.get(
+                            "ignore_identical_ids",
+                            config["benchmark"].casefold() == "beir",
+                        )
+                    ),
                 )
             else:
                 candidates = dense_search_restricted(
@@ -155,6 +180,12 @@ def run(
                     document_ids,
                     task.candidates,
                     top_k=top_k,
+                    ignore_identical_ids=bool(
+                        config.get(
+                            "ignore_identical_ids",
+                            config["benchmark"].casefold() == "beir",
+                        )
+                    ),
                 )
             write_run(
                 candidate_path,
@@ -177,7 +208,13 @@ def run(
             candidates,
             reranker_model,
             top_k=rerank_top_k,
-            instruction=_instruction(task, config),
+            instruction=_instruction(task, config, stage="rerank"),
+            ignore_identical_ids=bool(
+                config.get(
+                    "ignore_identical_ids",
+                    config["benchmark"].casefold() == "beir",
+                )
+            ),
         )
         task_metrics = evaluate_run(task.qrels, reranked, metrics)
         task_rows[task.name] = task_metrics

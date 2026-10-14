@@ -13,6 +13,7 @@ def dense_search(
     document_ids: Sequence[str],
     *,
     top_k: int = 100,
+    ignore_identical_ids: bool = False,
 ) -> Dict[str, Dict[str, float]]:
     if top_k <= 0:
         raise ValueError("top_k must be positive")
@@ -31,6 +32,9 @@ def dense_search(
     document_array = np.asarray(document_embeddings, dtype=np.float32)
     if not np.isfinite(query_array).all() or not np.isfinite(document_array).all():
         raise ValueError("embeddings must contain only finite values")
+    # Search one extra item when identical query/document IDs are excluded so
+    # filtering does not reduce a requested top-k result by one rank.
+    search_limit = min(top_k + int(ignore_identical_ids), len(document_ids))
     limit = min(top_k, len(document_ids))
     if not limit:
         return {query_id: {} for query_id in query_ids}
@@ -39,7 +43,7 @@ def dense_search(
 
         index = faiss.IndexFlatIP(document_embeddings.shape[1])
         index.add(document_array)
-        scores, indices = index.search(query_array, limit)
+        scores, indices = index.search(query_array, search_limit)
     except ImportError:
         # Keep FAISS optional.  Compute one query row at a time so a local
         # CPU-only install remains runnable without allocating a QxD matrix.
@@ -47,7 +51,7 @@ def dense_search(
         scores_rows = []
         for query in query_array:
             row_scores = query @ document_array.T
-            row_indices = np.argsort(-row_scores, kind="stable")[:limit]
+            row_indices = np.argsort(-row_scores, kind="stable")[:search_limit]
             indices_rows.append(row_indices)
             scores_rows.append(row_scores[row_indices])
         indices = np.asarray(indices_rows, dtype=np.int64)
@@ -55,8 +59,10 @@ def dense_search(
     result: Dict[str, Dict[str, float]] = {}
     for row, query_id in enumerate(query_ids):
         pairs = [
-            (document_ids[index], float(score)) for index, score in zip(indices[row], scores[row])
-        ]
+            (document_ids[index], float(score))
+            for index, score in zip(indices[row], scores[row])
+            if not (ignore_identical_ids and document_ids[index] == query_id)
+        ][:limit]
         if any(not math.isfinite(score) for _, score in pairs):
             raise ValueError(f"{query_id}: retrieval produced a non-finite score")
         pairs.sort(key=lambda item: (-item[1], item[0]))
@@ -72,6 +78,7 @@ def dense_search_restricted(
     candidates: Mapping[str, Sequence[str]],
     *,
     top_k: int = 100,
+    ignore_identical_ids: bool = False,
 ) -> Dict[str, Dict[str, float]]:
     """Search a query-specific candidate pool, as required by LMEB."""
     if top_k <= 0:
@@ -100,7 +107,14 @@ def dense_search_restricted(
         scores = document_array[indices] @ query_array[row]
         if not np.isfinite(scores).all():
             raise ValueError(f"{query_id}: retrieval produced a non-finite score")
-        pairs = sorted(zip(candidate_ids, scores.tolist()), key=lambda item: (-item[1], item[0]))
+        pairs = sorted(
+            (
+                (document_id, score)
+                for document_id, score in zip(candidate_ids, scores.tolist())
+                if not (ignore_identical_ids and document_id == query_id)
+            ),
+            key=lambda item: (-item[1], item[0]),
+        )
         result[query_id] = dict(pairs[:top_k])
     return result
 
@@ -136,6 +150,7 @@ def rerank(
     *,
     top_k: int = 100,
     instruction: Optional[str] = None,
+    ignore_identical_ids: bool = False,
 ) -> Dict[str, Dict[str, float]]:
     if top_k <= 0:
         raise ValueError("top_k must be positive")
@@ -158,6 +173,8 @@ def rerank(
             doc_id
             for doc_id, _ in sorted(candidate_scores.items(), key=lambda item: (-item[1], item[0]))
         ][:top_k]
+        if ignore_identical_ids:
+            ranked_ids = [doc_id for doc_id in ranked_ids if doc_id != query_id]
         missing = [doc_id for doc_id in ranked_ids if doc_id not in task.corpus]
         if missing:
             raise ValueError(

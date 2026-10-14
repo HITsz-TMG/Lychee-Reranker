@@ -2,6 +2,9 @@ benchmark: beir
 data_dir: data/beir
 output_dir: results/beir
 split: test
+splits:
+  msmarco: dev
+ignore_identical_ids: true
 tasks: [arguana, climate-fever, cqadupstack, dbpedia-entity, fever, fiqa, hotpotqa, msmarco, nfcorpus, nq, quora, scidocs, scifact]
 retrieval_top_k: 100
 rerank_top_k: 100
