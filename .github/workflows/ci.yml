@@ -13,17 +13,12 @@ jobs:
         with:
           python-version: "3.10"
       - run: python -m pip install --upgrade pip
-      - run: pip install -e '.[train,eval,dev]'
-      - run: ruff check src tests
+      - run: pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e '.[train,eval,faiss,dev]' -c requirements/repro.txt
+      - run: ruff check src tests scripts
+      - run: ruff format --check src tests scripts
       - run: pytest
       - run: python -m build
       - run: python -m lychee_reranker.train.cli --help
       - run: lychee-reranker-eval --help
-      - name: Reject private artifacts
-        run: |
-          private_root='/(mnt|root|home|Users)/'
-          key_marker='BE'"GIN PRIVATE KEY"
-          token_prefix='s'"k-"
-          hub_prefix='h'"f_"
-          ! rg -n "$private_root|$key_marker|${token_prefix}[A-Za-z0-9]|${hub_prefix}[A-Za-z0-9]{20,}" .
-          test -z "$(find . -type f -size +10M -not -path './.git/*' -print -quit)"
+      - run: python scripts/check_release.py

@@ -1,0 +1,7 @@
+include LICENSE THIRD_PARTY_NOTICES.md README.md
+recursive-include configs *.yaml
+recursive-include docs *.md *.json
+recursive-include examples *.py *.sh
+recursive-include requirements *.txt
+recursive-include scripts *.py *.sh
+recursive-include tests *.py

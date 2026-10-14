@@ -1,199 +1,179 @@
 # Lychee-Reranker-V1
 
-Minimal, standalone training, inference, checkpoint, and evaluation code for
-[Lychee-Reranker-V1](https://arxiv.org/abs/2606.22807). This repository supports
-the Nano, Small, and Large encoder-decoder rerankers without importing
-FlagEmbedding at runtime.
+Focused training, inference and evaluation code for
+[Lychee-Reranker](https://arxiv.org/abs/2606.22807v4), formerly KaLM-Reranker-V1.
+The package supports the Nano, Small and Large T5Gemma2 encoder–decoder models.
+It contains SFT, teacher-score distillation, LoRA merging, ModelSoup, and
+BEIR/MIRACL/LMEB evaluation. It does not depend on FlagEmbedding at runtime.
 
-This repository contains code and reproducibility configurations only. Model
-weights, training data, benchmark data, and generated results are not bundled.
+Model weights, real datasets and experiment outputs are supplied separately.
+All paths below are placeholders. See [training details](docs/training.md) and
+[validation evidence](docs/validation.md) before reproducing an experiment.
 
-## Install
+## Installation
 
-Python 3.10 is recommended. The original code path was validated with PyTorch
-2.8.0, Transformers 5.3.0, Datasets 4.8.4, Accelerate 1.13.0, PEFT 0.18.1,
-DeepSpeed 0.18.8, and PyArrow 23.0.1. See `requirements/repro.txt` for the
-complete reference environment.
+Use Python 3.10 or newer, in a dedicated environment. Install a PyTorch build
+suited to your CUDA driver first, then install this repository:
 
 ```bash
-pip install -e '.[train,eval,deepspeed]'
+python -m pip install -e '.[train,eval,faiss,dev]' -c requirements/repro.txt
 ```
 
-Install a PyTorch wheel compatible with your CUDA driver before installing the
-remaining requirements. Flash Attention is not required. The T5Gemma2 models
-load natively in Transformers 5.3.0, so `trust_remote_code` defaults to false.
+`requirements/repro.txt` records the tested dependency versions. The `faiss`
+extra accelerates exact retrieval on larger corpora. Small fixtures can use the
+NumPy backend without it. Neither Flash Attention nor DeepSpeed is required.
+The default launcher uses native PyTorch distributed training.
 
 ## Inference
 
 ```python
 from lychee_reranker import LycheeReranker
 
-model = LycheeReranker(
-    "models/Lychee-Reranker-V1-Nano",
+reranker = LycheeReranker(
+    "/path/to/merged-reranker",
+    device="cuda",
     dtype="bfloat16",
     chunk_size=4,
 )
-scores = model.predict([
-    ("query", "relevant document"),
-    ("query", "unrelated document"),
+scores = reranker.predict([
+    ("What is the capital of France?", "Paris is the capital of France."),
+    ("What is the capital of France?", "Berlin is the capital of Germany."),
 ])
 ```
 
-The returned score is `P(yes)` from the lowercase `yes` and `no` logits. Query
-and document inputs are truncated independently, encoder states are mean-pooled
-in chunks, and scores are restored to caller order after length-sorted batching.
+Scores are `P(yes)` from the `yes`/`no` logits, in input order. `rank(query,
+ documents, top_k=10)` returns ranked input indices and scores. The compression
+ratio is controlled by `chunk_size`; `1` retains the full representation.
 
-## Training data
+## Training
 
-JSON, JSONL, and Parquet shards share one schema:
-
-```json
-{
-  "query": "...",
-  "pos": ["..."],
-  "neg": ["..."],
-  "prompt": "Given a query, retrieve documents that answer the query.",
-  "pos_scores": [4.2],
-  "neg_scores": [-2.3]
-}
-```
-
-`pos_scores` and `neg_scores` are mandatory only for distillation and represent
-the teacher's `yes_logit - no_logit`. The loader preserves duplicate rows and
-repeated source paths because these encode training multiplicity. It validates
-non-empty candidates, score lengths, and finite values.
-
-## Training and release2 construction
-
-Nine explicit recipes live in `configs/train`: one SFT recipe and two KD recipes
-for each model size. Use `--train-data` and `--output-dir` to replace the portable
-placeholder paths in a recipe.
+The paper workflow is **SFT → two independent KD branches → merge each adapter
+→ equal-weight ModelSoup**. The two KD branches both start from the merged SFT
+checkpoint. Nine recipes cover all three model sizes in `configs/train/`.
 
 ```bash
-torchrun --standalone --nproc-per-node=8 -m lychee_reranker.train.cli \
+# Stage 1: use the Nano backbone, or the corresponding Small/Large recipe.
+torchrun --standalone --nproc-per-node=1 -m lychee_reranker.train.cli \
   --config configs/train/nano_sft.yaml \
-  --train-data /path/to/sft/parquet \
+  --model-name-or-path /path/to/t5gemma-2-270m-270m \
+  --train-data /path/to/supervised-shards \
   --output-dir outputs/nano/sft-adapter
 
 lychee-reranker-merge \
-  --base-model google/t5gemma-2-270m-270m \
+  --base-model /path/to/t5gemma-2-270m-270m \
   --adapter outputs/nano/sft-adapter \
   --output-dir outputs/nano/sft-merged
 
-torchrun --standalone --nproc-per-node=8 -m lychee_reranker.train.cli \
-  --config configs/train/nano_distill_r64.yaml \
-  --train-data /path/to/distillation/parquet
+# Stage 2: independent KD branches, initialized from Stage 1.
+for rank in 64 96; do
+  torchrun --standalone --nproc-per-node=1 -m lychee_reranker.train.cli \
+    --config "configs/train/nano_distill_r${rank}.yaml" \
+    --model-name-or-path outputs/nano/sft-merged \
+    --train-data /path/to/teacher-scored-shards \
+    --output-dir "outputs/nano/kd-r${rank}-adapter"
 
-torchrun --standalone --nproc-per-node=8 -m lychee_reranker.train.cli \
-  --config configs/train/nano_distill_r96.yaml \
-  --train-data /path/to/distillation/parquet
+  lychee-reranker-merge \
+    --base-model outputs/nano/sft-merged \
+    --adapter "outputs/nano/kd-r${rank}-adapter" \
+    --output-dir "outputs/nano/kd-r${rank}-merged"
+done
 
-lychee-reranker-merge --base-model outputs/nano/sft-merged \
-  --adapter outputs/nano/kd-r64-adapter --output-dir outputs/nano/kd-r64-merged
-lychee-reranker-merge --base-model outputs/nano/sft-merged \
-  --adapter outputs/nano/kd-r96-adapter --output-dir outputs/nano/kd-r96-merged
-
+# Stage 3: average merged models, not raw adapters of different ranks.
 lychee-reranker-soup \
   --model outputs/nano/kd-r64-merged --weight 0.5 \
   --model outputs/nano/kd-r96-merged --weight 0.5 \
-  --output-dir outputs/nano/release2
+  --output-dir outputs/nano/final
 ```
 
-SFT uses independent binary cross-entropy over `[no, yes]` for every passage.
-KD matches the teacher logit difference with a Bernoulli KL-equivalent loss.
-Losses from chunk sizes 2, 8, 32, and 128 are summed, matching the release
-training code; returned scores are the normalized average across chunks.
+These example commands use one GPU. The paper uses **32 GPUs** with an effective
+batch of 128 query groups. Adjust the distributed launch and accumulation as
+explained in [training.md](docs/training.md); one GPU with the unchanged recipe
+has a smaller effective batch. Resume a training run with
+`--resume-from-checkpoint /path/to/output/checkpoint-N` and the same recipe.
 
-The soup command accepts only merged safetensors models with identical tensor
-keys, shapes, dtypes, model config, and tokenizer files. Floating tensors are
-averaged; integer tensors must be identical. Outputs are written atomically with
-a manifest.
+Training accepts JSON, JSONL or Parquet with this schema:
 
-### Provenance limitation
+```json
+{
+  "query": "What do bees produce?",
+  "prompt": "Given a query, retrieve documents that answer the query.",
+  "pos": ["Bees produce honey."],
+  "neg": ["A bicycle has two wheels."],
+  "pos_scores": [2.5],
+  "neg_scores": [-1.8]
+}
+```
 
-The canonical Nano r96 KD launcher was missing from the source snapshot. Its
-public recipe was reconstructed from the final adapter metadata and the common
-release2 KD settings. The legacy `_ck37` launcher used a different mixed loss
-and is intentionally excluded. Consequently, the provided Nano recipe is not
-claimed to reproduce the original checkpoint bit-for-bit. The source snapshot
-also lacked Git history and exact base-model revisions; pin revisions before an
-archival reproduction run.
+The score fields are required for KD and contain the teacher's
+`yes_logit - no_logit`, **not probabilities**. The loader applies sigmoid to
+obtain soft labels. The released workflow consumes prepared teacher scores;
+it does not run the 8B teacher or regenerate the training corpus implicitly.
+Repeated records and repeated shard paths preserve training multiplicity.
 
 ## Evaluation
 
-Evaluation is local-data-only and fails when required files are missing. It
-never downloads benchmark data implicitly.
+Evaluation uses local benchmark files. The supplied configurations cover the
+paper's 13 BEIR tasks, 18 MIRACL languages and six LMEB Dialogue groups. The
+first stage retrieves 100 candidates using KaLM-Embedding-V2.5, then the
+reranker scores the same candidates. The main metric is nDCG@10.
 
 ```bash
-# Generate Top-100 candidates and rerank them.
+# Retrieve and rerank.
 lychee-reranker-eval --config configs/eval/beir.yaml --stage all \
-  --data-dir /path/to/beir --output-dir results/beir
+  --data-dir /path/to/beir \
+  --embedder-name-or-path /path/to/KaLM-Embedding-V2.5 \
+  --reranker-name-or-path /path/to/merged-reranker \
+  --output-dir results/beir
 
-# Generate candidates only.
-lychee-reranker-eval --config configs/eval/miracl.yaml --stage retrieve
-
-# Reuse candidate JSON files from another run.
-lychee-reranker-eval --config configs/eval/miracl.yaml --stage rerank \
-  --candidate-dir /path/to/candidates
+# Reuse candidates without loading the embedder.
+lychee-reranker-eval --config configs/eval/beir.yaml --stage rerank \
+  --data-dir /path/to/beir \
+  --reranker-name-or-path /path/to/another-merged-reranker \
+  --candidate-dir results/beir/candidates \
+  --output-dir results/beir-another-model
 ```
 
-Candidate and result files include a schema version, benchmark/split, model ID
-and revision, configuration digest, input-manifest digest, and deterministic
-ranked results. JSON metrics use the `[0, 1]` scale; Markdown summaries display
-percentages.
+See [evaluation.md](docs/evaluation.md) for layouts, split selection, candidate
+integrity, LMEB filtering, aggregation and metrics. JSON metrics are on the
+0–1 scale; Markdown summaries display percentages.
 
-### Dataset layouts
+## Tests
 
-BEIR:
+CPU checks do not download models or datasets:
 
-```text
-<root>/<dataset>/corpus.jsonl
-<root>/<dataset>/test_queries.jsonl
-<root>/<dataset>/test_qrels.jsonl
+```bash
+python -m pytest
+ruff check src tests scripts
+ruff format --check src tests scripts
+python -m build
+python scripts/check_release.py
 ```
 
-MIRACL:
+The GPU smoke test uses local models, synthetic text, and a **new** output
+directory. It executes SFT, checkpoint resume, both KD branches, merging,
+ModelSoup, multiple compression ratios, and all three evaluation pipelines.
+It uses the Nano recipe's LoRA ranks, batch/group sizes and MEP ratios, but only
+two optimizer steps per branch. Synthetic teacher scores check the KD path;
+they are not outputs from Qwen3-Reranker-8B.
 
-```text
-<root>/<language>/corpus.jsonl
-<root>/<language>/dev_queries.jsonl
-<root>/<language>/dev_qrels.jsonl
+```bash
+bash scripts/gpu_smoke.sh \
+  --base-model /path/to/t5gemma-2-270m-270m \
+  --embedder-model /path/to/KaLM-Embedding-V2.5 \
+  --work-dir /path/to/new-smoke-output
 ```
 
-LMEB:
+For comparison with an earlier standalone implementation, additionally pass
+`--reference-implementation /path/to/kalm_reranker.py` and
+`--reference-model /path/to/released-Nano-checkpoint`. GPU environment exports
+are included in the shell launcher. Set `PYTHON=/path/to/python` to select an
+environment. Generated logs, caches and weights stay in the output directory.
 
-```text
-<root>/task_instructions.json
-<root>/<group>/corpus.jsonl
-<root>/<group>/candidates.jsonl
-<root>/<group>/<leaf>/queries.jsonl
-<root>/<group>/<leaf>/qrels.tsv
-```
+## License and provenance
 
-For LMEB, qrels are restricted to each query's candidate pool and queries with
-no positive candidate are removed, matching the original evaluator. Retrieval
-is also restricted to that pool.
-
-The supplied configs reproduce the paper task sets: 13 BEIR datasets, 18 MIRACL
-languages, and LMEB Dialogue groups ConvoMem, LoCoMo, LongMemEval, MemBench,
-REALTALK, and TMD. The main metrics are nDCG@10 plus the benchmark-specific
-recall, nDCG@100, and MRR values declared in each config.
-
-## Validation status
-
-The repository's unit tests cover schema validation, JSONL/Parquet loading,
-prompt construction, chunk pooling, SFT/KD losses, benchmark loaders, candidate
-round-tripping, deterministic ranking, metrics, and model-soup rejection paths.
-CI does not download models or datasets.
-
-Full training and full benchmark evaluation are intentionally not run as part
-of repository construction. The local Nano checkpoint passed both an FP32 CPU
-single-pair parity smoke test and the fixed six-pair FiQA BF16 GPU comparison
-against the original FlagEmbedding wrapper. Both produced `max_abs_diff=0.0`;
-the FiQA ranking order was identical under the `1e-5` strict tolerance.
-
-## License
-
-Code is released under the MIT License. See `THIRD_PARTY_NOTICES.md` for the
-FlagEmbedding attribution. Model and dataset licenses must be reviewed
-separately before redistributing those artifacts.
+Code is MIT-licensed. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) retains
+FlagEmbedding attribution. Models and datasets have separate licenses.
+This is a reviewed extraction and correction of the original implementation;
+exact historical base revisions and a complete original training-data order
+were unavailable. The recipes implement arXiv v4 and do not claim bitwise
+reproduction of the published model weights.

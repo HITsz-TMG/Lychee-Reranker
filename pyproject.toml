@@ -1,19 +1,21 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "lychee-reranker"
 version = "1.0.0"
-description = "Training, inference, and evaluation code for Lychee-Reranker-V1"
+description = "Paper-aligned training, inference, and evaluation for Lychee-Reranker-V1"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {file = "LICENSE"}
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{name = "Lychee-Reranker contributors"}]
 dependencies = [
   "numpy>=1.26",
   "torch>=2.6",
   "transformers>=5.3.0,<6",
+  "safetensors>=0.6",
 ]
 
 [project.optional-dependencies]
@@ -24,8 +26,8 @@ train = [
   "pyarrow>=23.0.1,<24",
   "PyYAML>=6.0",
 ]
-deepspeed = ["deepspeed>=0.18.8,<0.19"]
-eval = ["faiss-cpu>=1.10", "PyYAML>=6.0", "tqdm>=4.66"]
+eval = ["PyYAML>=6.0", "tqdm>=4.66"]
+faiss = ["faiss-cpu>=1.10"]
 dev = ["build>=1.2", "pytest>=8", "ruff>=0.11"]
 
 [project.scripts]
@@ -37,12 +39,19 @@ lychee-reranker-eval = "lychee_reranker.evaluation.cli:main"
 [tool.setuptools]
 package-dir = {"" = "src"}
 
+[project.urls]
+Repository = "https://github.com/HITsz-TMG/Lychee-Reranker-V1"
+Paper = "https://arxiv.org/abs/2606.22807v4"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

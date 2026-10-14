@@ -21,3 +21,11 @@ wandb/
 *.pth
 *.ckpt
 *.safetensors
+data/
+models/
+.env
+.env.*
+*.pem
+*.key
+*.parquet
+smoke-output/

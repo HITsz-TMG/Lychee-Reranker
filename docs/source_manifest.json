@@ -1,0 +1,29 @@
+{
+  "paper": "https://arxiv.org/abs/2606.22807v4",
+  "purpose": "source snapshots consulted during extraction; not a training reproduction claim",
+  "schema_version": 1,
+  "source_files_sha256": {
+    "original-source/examples/inference/reranker/encoder_decoder/kalm_reranker.py": "741861b6ae62fdb9b386bdde5cfa0da76bc23c551cf75ed9bcf63de31389001f",
+    "previous-extraction/src/kalm_reranker/__init__.py": "00ace8b84e776ab4a702d3e110c934e9d241590e8a3e7a9ce8561226d56fd04e",
+    "previous-extraction/src/kalm_reranker/checkpoint/__init__.py": "b982fd9f7aaa5b50000baecd98e0239fdbaa859ec91a0c4da72a2db69a59f8a5",
+    "previous-extraction/src/kalm_reranker/checkpoint/merge.py": "bd991266a69339328ea438a4d79f65d35dc1fb85a6f13adc4c3c058f118a3999",
+    "previous-extraction/src/kalm_reranker/checkpoint/soup.py": "a67b3d1975c1f81b892a47974a0c201f8b4d64fe06b50d9a612bef64fde934a9",
+    "previous-extraction/src/kalm_reranker/evaluation/__init__.py": "d034d3d4820874df3a97d79c38414733640f8eb1204c50852d2b5a80647fabb7",
+    "previous-extraction/src/kalm_reranker/evaluation/benchmarks.py": "679c1586ca7ab1882d55fef02a8675786bc09687c83325b46a8a2820ac1261e1",
+    "previous-extraction/src/kalm_reranker/evaluation/cli.py": "2c1118f8af606dc2ef74f3140f85d74e4575ce1aeb829249e4606730da6f544f",
+    "previous-extraction/src/kalm_reranker/evaluation/data.py": "d8d0df33e25fc321fb90c463eca51e05e8557c68da75c9ef47e543953da8182c",
+    "previous-extraction/src/kalm_reranker/evaluation/embedder.py": "97399743bfb82b43eb7b519bce30adeba93c19c699e22f75edb73bdcc668341c",
+    "previous-extraction/src/kalm_reranker/evaluation/io.py": "475b2ea7b36b2d920a3f77c8ffc7b4438e7e5c311ba5733ac3dff948b1dca2fa",
+    "previous-extraction/src/kalm_reranker/evaluation/metrics.py": "7d5187e52cf014be3bdd51d78b50b97c347048cb004b6d3cae7c03a41b24abf9",
+    "previous-extraction/src/kalm_reranker/evaluation/retrieval.py": "b8b7ca34a8af8731a5a7d18f6ecceebc9415cfb6a849334678d7c06501404f9e",
+    "previous-extraction/src/kalm_reranker/inference.py": "dc4b4c9c2f601da132ba8feae55436688cb5b264618027fc0bdb69a664b44744",
+    "previous-extraction/src/kalm_reranker/prompts.py": "2ce982372dfa259e516804f03cd9a68b010dbe6a4bc9c23928e3366403fb2c3f",
+    "previous-extraction/src/kalm_reranker/train/__init__.py": "71b08932789d1eeafa7d0046cbd230b4c1f391d3a8a79c9b8368d24ae3f535a3",
+    "previous-extraction/src/kalm_reranker/train/cli.py": "4151bd8e747c1661e495a2976095f0d80a463e950c584b729af2b8b57427208f",
+    "previous-extraction/src/kalm_reranker/train/config.py": "17ba18686a5612cfd1527d085220ee6d68f14174698943ddf6743508fca57b80",
+    "previous-extraction/src/kalm_reranker/train/data.py": "77726dc5d62726b9ce33a7e1812f8f53a88694571122eeec59363ecc5b20b821",
+    "previous-extraction/src/kalm_reranker/train/model.py": "1e5f2038c032e1af51da507e0dd19619ebbccecede12be4864a3101bb4880034",
+    "previous-extraction/src/kalm_reranker/train/trainer.py": "c8bb054e8abe3c1352c486fa69fcefcb4a65fc191bd98888b208691b42cef250"
+  },
+  "upstream_git_revision": null
+}
