@@ -159,6 +159,38 @@ class EvaluationDataTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "candidate pool manifest"):
                 read_run(run_path, expected_task=task)
 
+    def test_candidate_policy_is_checked_when_reusing_candidates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = root / "fiqa"
+            write_jsonl(base / "corpus.jsonl", [{"_id": "d", "text": "doc"}])
+            write_jsonl(base / "test_queries.jsonl", [{"_id": "q", "text": "query"}])
+            write_jsonl(base / "test_qrels.jsonl", [{"query-id": "q", "corpus-id": "d", "score": 1}])
+            task = load_beir(root, "fiqa")[0]
+            run_path = root / "run.json"
+            write_run(
+                run_path,
+                task=task,
+                run={"q": {"d": 0.7}},
+                kind="candidates",
+                model={"id": "toy", "ignore_identical_ids": True},
+                config_digest="x",
+            )
+            self.assertEqual(
+                read_run(
+                    run_path,
+                    expected_task=task,
+                    expected_ignore_identical_ids=True,
+                ),
+                {"q": {"d": 0.7}},
+            )
+            with self.assertRaisesRegex(ValueError, "policy mismatch"):
+                read_run(
+                    run_path,
+                    expected_task=task,
+                    expected_ignore_identical_ids=False,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

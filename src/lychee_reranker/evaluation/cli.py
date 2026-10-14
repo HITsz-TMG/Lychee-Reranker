@@ -143,6 +143,12 @@ def run(
     top_k = int(config.get("retrieval_top_k", 100))
     rerank_top_k = int(config.get("rerank_top_k", 100))
     metrics = tuple(config.get("metrics", DEFAULT_METRICS[config["benchmark"].lower()]))
+    ignore_identical_ids = bool(
+        config.get(
+            "ignore_identical_ids",
+            config["benchmark"].casefold() == "beir",
+        )
+    )
     embedder = _build_embedder(config) if stage in {"retrieve", "all"} else None
     reranker_model = _build_reranker(config) if stage in {"rerank", "all"} else None
     task_rows = {}
@@ -165,12 +171,7 @@ def run(
                     query_ids,
                     document_ids,
                     top_k=top_k,
-                    ignore_identical_ids=bool(
-                        config.get(
-                            "ignore_identical_ids",
-                            config["benchmark"].casefold() == "beir",
-                        )
-                    ),
+                    ignore_identical_ids=ignore_identical_ids,
                 )
             else:
                 candidates = dense_search_restricted(
@@ -180,12 +181,7 @@ def run(
                     document_ids,
                     task.candidates,
                     top_k=top_k,
-                    ignore_identical_ids=bool(
-                        config.get(
-                            "ignore_identical_ids",
-                            config["benchmark"].casefold() == "beir",
-                        )
-                    ),
+                    ignore_identical_ids=ignore_identical_ids,
                 )
             write_run(
                 candidate_path,
@@ -196,11 +192,16 @@ def run(
                     "id": embedder.model_name_or_path,
                     "revision": embedder.revision,
                     "top_k": top_k,
+                    "ignore_identical_ids": ignore_identical_ids,
                 },
                 config_digest=config_digest,
             )
         else:
-            candidates = read_run(candidate_path, expected_task=task)
+            candidates = read_run(
+                candidate_path,
+                expected_task=task,
+                expected_ignore_identical_ids=ignore_identical_ids,
+            )
         if stage == "retrieve":
             continue
         reranked = rerank(
@@ -209,12 +210,7 @@ def run(
             reranker_model,
             top_k=rerank_top_k,
             instruction=_instruction(task, config, stage="rerank"),
-            ignore_identical_ids=bool(
-                config.get(
-                    "ignore_identical_ids",
-                    config["benchmark"].casefold() == "beir",
-                )
-            ),
+            ignore_identical_ids=ignore_identical_ids,
         )
         task_metrics = evaluate_run(task.qrels, reranked, metrics)
         task_rows[task.name] = task_metrics
@@ -227,6 +223,7 @@ def run(
                 "id": reranker_model.model_name_or_path,
                 "revision": reranker_model.revision,
                 "chunk_size": reranker_model.chunk_size,
+                "ignore_identical_ids": ignore_identical_ids,
             },
             config_digest=config_digest,
             metrics=task_metrics,

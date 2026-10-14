@@ -107,7 +107,12 @@ def write_run(
     return output
 
 
-def read_run(path: str | Path, *, expected_task=None) -> Dict[str, Dict[str, float]]:
+def read_run(
+    path: str | Path,
+    *,
+    expected_task=None,
+    expected_ignore_identical_ids: bool | None = None,
+) -> Dict[str, Dict[str, float]]:
     source = Path(path)
     if not source.is_file():
         raise FileNotFoundError(f"candidate run not found: {source}")
@@ -125,6 +130,18 @@ def read_run(path: str | Path, *, expected_task=None) -> Dict[str, Dict[str, flo
             raise ValueError(f"candidate input manifest does not match current data: {source}")
         if payload.get("candidate_manifest_digest") != candidate_digest(expected_task):
             raise ValueError(f"candidate pool manifest does not match current data: {source}")
+    if expected_ignore_identical_ids is not None:
+        model = payload.get("model")
+        actual_policy = model.get("ignore_identical_ids") if isinstance(model, Mapping) else None
+        if not isinstance(actual_policy, bool):
+            raise ValueError(
+                f"candidate file does not record ignore_identical_ids policy: {source}"
+            )
+        if actual_policy != expected_ignore_identical_ids:
+            raise ValueError(
+                f"candidate ignore_identical_ids policy mismatch: expected "
+                f"{expected_ignore_identical_ids}, got {actual_policy}: {source}"
+            )
     result = {}
     for query_id, records in payload["results"].items():
         if not isinstance(records, list):
