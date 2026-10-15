@@ -1,4 +1,4 @@
-# Lychee-Reranker-V1
+# Lychee-Reranker
 
 Focused training, inference and evaluation code for
 [Lychee-Reranker](https://arxiv.org/abs/2606.22807v4), formerly KaLM-Reranker-V1.
