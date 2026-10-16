@@ -1,6 +1,21 @@
 # Lychee-Reranker
 
-Focused training, inference and evaluation code for
+<p align="center">
+  <a href="https://huggingface.co/collections/KaLM-Embedding/lychee-kalm-reranker-and-jev">
+    <img src="https://img.shields.io/badge/%F0%9F%A4%97_Collection-Model-ffbd45.svg" alt="HF Collection">
+  </a>
+  <a href="https://arxiv.org/abs/2606.22807">
+    <img src="https://img.shields.io/badge/Paper-Lychee--Reranker-d4333f?logo=arxiv&logoColor=white&colorA=cccccc&colorB=d4333f&style=flat" alt="Paper">
+  </a>
+  <a href="https://huggingface.co/datasets/KaLM-Embedding/KaLM-reranker-training-data">
+    <img src="https://img.shields.io/badge/%F0%9F%A4%97_Training-Data-ffbd45.svg" alt="Data">
+  </a>
+  <a href="https://github.com/HITsz-TMG/Lychee-Reranker">
+    <img src="https://img.shields.io/badge/GitHub-Code-blue.svg?logo=github&" alt="GitHub Code">
+  </a>
+</p>
+
+Training, inference and evaluation code for
 [Lychee-Reranker](https://huggingface.co/papers/2606.22807), formerly KaLM-Reranker-V1.
 The package supports the Nano, Small and Large T5Gemma2 encoder–decoder models.
 It contains SFT, teacher-score distillation, LoRA merging, ModelSoup, and
