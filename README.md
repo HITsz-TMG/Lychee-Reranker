@@ -1,10 +1,10 @@
 # Lychee-Reranker
 
 Focused training, inference and evaluation code for
-[Lychee-Reranker](https://arxiv.org/abs/2606.22807v4), formerly KaLM-Reranker-V1.
+[Lychee-Reranker](https://huggingface.co/papers/2606.22807), formerly KaLM-Reranker-V1.
 The package supports the Nano, Small and Large T5Gemma2 encoder–decoder models.
 It contains SFT, teacher-score distillation, LoRA merging, ModelSoup, and
-BEIR/MIRACL/LMEB evaluation. It does not depend on FlagEmbedding at runtime.
+BEIR/MIRACL/LMEB evaluation.
 
 Model weights, real datasets and experiment outputs are supplied separately.
 All paths below are placeholders. See [training details](docs/training.md) and
