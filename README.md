@@ -181,3 +181,21 @@ This is a reviewed extraction and correction of the original implementation;
 exact historical base revisions and a complete original training-data order
 were unavailable. The recipes implement arXiv v4 and do not claim bitwise
 reproduction of the published model weights.
+
+
+# Citation
+If you find our work useful, please consider citing our paper.
+```
+@misc{zhao2026lycheererankerfastlateinteraction,
+      title={Lychee-Reranker: Fast but Not Late Interaction for Compressed Document Reranking}, 
+      author={Xinping Zhao and Jiaxin Xu and Ziqi Dai and Xin Zhang and Huiyao Chen and Shouzheng Huang and Xianhao Xiong and Danyu Tang and Xinshuo Hu and Guohong Fu and Meishan Zhang and Baotian Hu},
+      year={2026},
+      eprint={2606.22807},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2606.22807}, 
+}
+```
+
+## Contact
+If you encounter any issues, feel free to contact us via the email: <zhaoxinping@stu.hit.edu.cn>
