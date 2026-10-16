@@ -16,7 +16,7 @@
 </p>
 
 Training, inference and evaluation code for
-[Lychee-Reranker](https://huggingface.co/papers/2606.22807), formerly KaLM-Reranker-V1.
+[Lychee-Reranker](https://huggingface.co/papers/2606.22807), **formerly KaLM-Reranker-V1**.
 The package supports the Nano, Small and Large T5Gemma2 encoder–decoder models.
 It contains SFT, teacher-score distillation, LoRA merging, ModelSoup, and
 BEIR/MIRACL/LMEB evaluation.
