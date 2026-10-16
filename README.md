@@ -22,7 +22,7 @@ It contains SFT, teacher-score distillation, LoRA merging, ModelSoup, and
 BEIR/MIRACL/LMEB evaluation.
 
 Model weights, real datasets and experiment outputs are supplied separately.
-All paths below are placeholders. See [training details](docs/training.md) and
+See [training details](docs/training.md) and
 [validation evidence](docs/validation.md) before reproducing an experiment.
 
 ## Installation
